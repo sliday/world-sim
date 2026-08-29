@@ -15,6 +15,7 @@ This is a live implementation track toward the paper's core mechanics, not a rep
 - Artifacts remain in the world, can be physically encountered by later agents, and retain executable lineage.
 - Bounded movement trails expose mean path length, regions visited, artifact-contact rate, and spatial entropy without allowing history to grow unbounded.
 - Private SQLite episodic logs retain up to approximately 250,000 tokens per agent with deterministic compaction.
+- Consecutive identical memories collapse into one lossless tick-ranged run (`T120–T420 ×6`); any intervening event starts a new run.
 - Roles shown in the UI are current behavior, never assigned identities.
 
 ## Runtime

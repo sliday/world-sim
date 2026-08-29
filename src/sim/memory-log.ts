@@ -8,6 +8,9 @@ export interface DurableMemoryEntry {
   kind: string;
   content: string;
   tokens: number;
+  firstTick?: number;
+  lastTick?: number;
+  repeatCount?: number;
 }
 
 export interface MemoryCompaction {
@@ -25,9 +28,42 @@ export function estimateMemoryTokens(value: string): number {
   return Math.max(1, Math.ceil(value.length / 3));
 }
 
+export function memoryRunKey(kind: string, content: string): string {
+  return `${kind.trim().toLowerCase()}\u0000${content.replace(/\s+/g, " ").trim()}`;
+}
+
+export function collapseRepeatedMemory(
+  entries: readonly DurableMemoryEntry[],
+): DurableMemoryEntry[] {
+  const collapsed: DurableMemoryEntry[] = [];
+  for (const source of [...entries].sort((a, b) => a.seq - b.seq)) {
+    const entry = {
+      ...source,
+      firstTick: source.firstTick ?? source.tick,
+      lastTick: source.lastTick ?? source.tick,
+      repeatCount: Math.max(1, source.repeatCount ?? 1),
+    };
+    const previous = collapsed.at(-1);
+    if (
+      previous &&
+      memoryRunKey(previous.kind, previous.content) === memoryRunKey(entry.kind, entry.content)
+    ) {
+      previous.seq = entry.seq;
+      previous.tick = entry.lastTick;
+      previous.lastTick = entry.lastTick;
+      previous.repeatCount = (previous.repeatCount ?? 1) + entry.repeatCount;
+      previous.tokens = Math.max(previous.tokens, entry.tokens);
+      continue;
+    }
+    collapsed.push(entry);
+  }
+  return collapsed;
+}
+
 function kindCounts(entries: DurableMemoryEntry[]): string {
   const counts = new Map<string, number>();
-  for (const entry of entries) counts.set(entry.kind, (counts.get(entry.kind) ?? 0) + 1);
+  for (const entry of entries)
+    counts.set(entry.kind, (counts.get(entry.kind) ?? 0) + Math.max(1, entry.repeatCount ?? 1));
   return [...counts.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([kind, count]) => `${kind} ${count}`)
@@ -55,20 +91,28 @@ export function compactMemoryLog(
     removeCount += 1;
   }
   const removedEntries = ordered.slice(0, removeCount);
+  const removedRuns = collapseRepeatedMemory(removedEntries);
   const kept = ordered.slice(removeCount);
   const first = removedEntries[0]!;
   const last = removedEntries.at(-1)!;
-  const signals = removedEntries
+  const signals = removedRuns
     .filter((entry) => /build|discover|repair|author|heard|said/i.test(entry.content))
     .slice(-24)
-    .map((entry) => `- T${entry.tick} ${entry.content}`)
+    .map((entry) => {
+      const count = Math.max(1, entry.repeatCount ?? 1);
+      const range =
+        count > 1 && entry.firstTick !== entry.lastTick
+          ? `T${entry.firstTick}–T${entry.lastTick} ×${count}`
+          : `T${entry.tick}`;
+      return `- ${range} ${entry.content}`;
+    })
     .join("\n");
   const summaryCharacterCap = Math.min(36_000, Math.max(48, (maximumTokens - targetTokens) * 3));
   const summaryHeader = "# COMPACTED LONG-TERM MEMORY";
   const fullSummary = [
     summaryHeader,
     previousSummary ? previousSummary.replace(/^# COMPACTED LONG-TERM MEMORY\s*/u, "").trim() : "",
-    `T${first.tick}–T${last.tick}: ${removedEntries.length} memories compressed (${kindCounts(removedEntries)}).`,
+    `T${first.tick}–T${last.tick}: ${removedEntries.length} memories compressed into ${removedRuns.length} runs (${kindCounts(removedRuns)}).`,
     signals ? `Durable signals:\n${signals}` : "",
   ]
     .filter(Boolean)

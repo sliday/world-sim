@@ -18,7 +18,12 @@ import {
   normalizeSpeech,
 } from "./engine";
 import { agentNameCatalog, generateAgentName } from "./names";
-import { compactMemoryLog, estimateMemoryTokens } from "./memory-log";
+import {
+  collapseRepeatedMemory,
+  compactMemoryLog,
+  estimateMemoryTokens,
+  memoryRunKey,
+} from "./memory-log";
 import { clampOverlayAnchor, easeToward, normalizeSettled, wrappedTarget } from "./motion";
 import type { AgentDirective, WorldState } from "./types";
 
@@ -392,5 +397,28 @@ describe("deterministic consequence layer", () => {
     expect(compacted.totalTokens).toBeLessThanOrEqual(40);
     expect(compacted.summary).toContain("COMPACTED LONG-TERM MEMORY");
     expect(compacted.kept.at(-1)?.seq).toBe(12);
+  });
+
+  it("collapses only consecutive identical memories into tick-ranged runs", () => {
+    const content = "A001 chose explore: continue local survey";
+    const tokens = estimateMemoryTokens(content);
+    const collapsed = collapseRepeatedMemory([
+      { seq: 1, tick: 60, kind: "decision", content, tokens },
+      { seq: 2, tick: 120, kind: "decision", content: ` ${content} `, tokens },
+      { seq: 3, tick: 130, kind: "heard", content: "Heard A002: Water north.", tokens: 8 },
+      { seq: 4, tick: 180, kind: "decision", content, tokens },
+    ]);
+
+    expect(memoryRunKey("Decision", ` ${content} `)).toBe(memoryRunKey("decision", content));
+    expect(collapsed).toHaveLength(3);
+    expect(collapsed[0]).toMatchObject({
+      seq: 2,
+      tick: 120,
+      firstTick: 60,
+      lastTick: 120,
+      repeatCount: 2,
+      content,
+    });
+    expect(collapsed[2]).toMatchObject({ firstTick: 180, lastTick: 180, repeatCount: 1 });
   });
 });

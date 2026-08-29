@@ -20,8 +20,10 @@ import {
 import {
   AGENT_MEMORY_CONTEXT_TOKENS,
   AGENT_MEMORY_TOKEN_CAP,
+  collapseRepeatedMemory,
   compactMemoryLog,
   estimateMemoryTokens,
+  memoryRunKey,
   type DurableMemoryEntry,
 } from "../src/sim/memory-log";
 import type {
@@ -86,8 +88,16 @@ interface MemoryTotalRow {
   entries: number;
 }
 
-interface MemoryEntryRow extends DurableMemoryEntry {
+interface MemoryEntryRow {
   [key: string]: SqlStorageValue;
+  seq: number;
+  tick: number;
+  kind: string;
+  content: string;
+  tokens: number;
+  firstTick: number;
+  lastTick: number;
+  repeatCount: number;
 }
 
 interface AgentMemoryView {
@@ -219,6 +229,30 @@ export class WorldRoom extends DurableObject<Env> {
           through_seq INTEGER NOT NULL
         );
       `);
+      const memoryColumns = new Set(
+        ctx.storage.sql
+          .exec<{ [key: string]: SqlStorageValue; name: string }>(
+            "PRAGMA table_info(agent_memory_entries)",
+          )
+          .toArray()
+          .map((column) => column.name),
+      );
+      if (!memoryColumns.has("first_tick"))
+        ctx.storage.sql.exec("ALTER TABLE agent_memory_entries ADD COLUMN first_tick INTEGER");
+      if (!memoryColumns.has("last_tick"))
+        ctx.storage.sql.exec("ALTER TABLE agent_memory_entries ADD COLUMN last_tick INTEGER");
+      if (!memoryColumns.has("repeat_count"))
+        ctx.storage.sql.exec(
+          "ALTER TABLE agent_memory_entries ADD COLUMN repeat_count INTEGER NOT NULL DEFAULT 1",
+        );
+      if (!memoryColumns.has("fingerprint"))
+        ctx.storage.sql.exec("ALTER TABLE agent_memory_entries ADD COLUMN fingerprint TEXT");
+      ctx.storage.sql.exec(
+        `UPDATE agent_memory_entries
+         SET first_tick = COALESCE(first_tick, tick),
+             last_tick = COALESCE(last_tick, tick),
+             repeat_count = MAX(1, repeat_count)`,
+      );
     });
   }
 
@@ -243,14 +277,19 @@ export class WorldRoom extends DurableObject<Env> {
   private readAgentMemory(agentId: string, limit = 12): AgentMemoryView {
     const summary = this.memorySummary(agentId);
     const total = this.memoryTotal(agentId);
-    const recent = this.ctx.storage.sql
+    const fetchLimit = Math.max(1, Math.min(1_000, Math.floor(limit) * 64));
+    const recentRows = this.ctx.storage.sql
       .exec<MemoryEntryRow>(
-        "SELECT seq, tick, kind, content, tokens FROM agent_memory_entries WHERE agent_id = ? ORDER BY seq DESC LIMIT ?",
+        `SELECT seq, tick, kind, content, tokens,
+                first_tick AS firstTick, last_tick AS lastTick, repeat_count AS repeatCount
+         FROM agent_memory_entries
+         WHERE agent_id = ? ORDER BY seq DESC LIMIT ?`,
         agentId,
-        Math.max(1, Math.min(40, Math.floor(limit))),
+        fetchLimit,
       )
       .toArray()
       .reverse();
+    const recent = collapseRepeatedMemory(recentRows).slice(-Math.max(1, Math.floor(limit)));
     return {
       agentId,
       tokenCap: AGENT_MEMORY_TOKEN_CAP,
@@ -268,7 +307,10 @@ export class WorldRoom extends DurableObject<Env> {
     if (total.tokens + (summary?.tokens ?? 0) <= AGENT_MEMORY_TOKEN_CAP) return;
     const entries = this.ctx.storage.sql
       .exec<MemoryEntryRow>(
-        "SELECT seq, tick, kind, content, tokens FROM agent_memory_entries WHERE agent_id = ? ORDER BY seq ASC",
+        `SELECT seq, tick, kind, content, tokens,
+                first_tick AS firstTick, last_tick AS lastTick, repeat_count AS repeatCount
+         FROM agent_memory_entries
+         WHERE agent_id = ? ORDER BY seq ASC`,
         agentId,
       )
       .toArray();
@@ -296,16 +338,53 @@ export class WorldRoom extends DurableObject<Env> {
     );
   }
 
-  private appendAgentMemory(agentId: string, tick: number, kind: string, content: string): void {
+  private appendAgentMemory(
+    agentId: string,
+    tick: number,
+    kind: string,
+    content: string,
+    firstTick = tick,
+    repeatCount = 1,
+  ): void {
     const bounded = content.replace(/\s+/g, " ").trim().slice(0, 600);
     if (!bounded) return;
+    const boundedKind = kind.slice(0, 24);
+    const fingerprint = memoryRunKey(boundedKind, bounded);
+    const latest = this.ctx.storage.sql
+      .exec<MemoryEntryRow>(
+        `SELECT seq, tick, kind, content, tokens, fingerprint,
+                first_tick AS firstTick, last_tick AS lastTick, repeat_count AS repeatCount
+         FROM agent_memory_entries
+         WHERE agent_id = ? ORDER BY seq DESC LIMIT 1`,
+        agentId,
+      )
+      .toArray()[0];
+    if (latest && memoryRunKey(latest.kind, latest.content) === fingerprint) {
+      this.ctx.storage.sql.exec(
+        `UPDATE agent_memory_entries
+         SET tick = ?, last_tick = ?, repeat_count = ?, fingerprint = ?
+         WHERE seq = ?`,
+        tick,
+        tick,
+        Math.max(1, latest.repeatCount ?? 1) + Math.max(1, repeatCount),
+        fingerprint,
+        latest.seq,
+      );
+      return;
+    }
     this.ctx.storage.sql.exec(
-      "INSERT INTO agent_memory_entries (agent_id, tick, kind, content, tokens) VALUES (?, ?, ?, ?, ?)",
+      `INSERT INTO agent_memory_entries
+        (agent_id, tick, kind, content, tokens, first_tick, last_tick, repeat_count, fingerprint)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       agentId,
       tick,
-      kind.slice(0, 24),
+      boundedKind,
       bounded,
       estimateMemoryTokens(bounded),
+      Math.min(firstTick, tick),
+      tick,
+      Math.max(1, repeatCount),
+      fingerprint,
     );
     this.compactAgentMemory(agentId);
   }
@@ -569,6 +648,12 @@ export class WorldRoom extends DurableObject<Env> {
           new TextEncoder().encode(candidate.algorithm).length,
         ) === 1,
       );
+      const previousActivity = agent
+        ? {
+            startTick: Math.max(1, Math.min(agent.script.updatedTick, candidateTick - 1)),
+            content: `Executed ${agent.script.icon} ${agent.script.actionId}: ${agent.script.rationale}`,
+          }
+        : undefined;
       const committed = applyDirective(
         world,
         outcome.agentId,
@@ -585,6 +670,18 @@ export class WorldRoom extends DurableObject<Env> {
           "validated directive could not be committed",
         );
         continue;
+      }
+      if (previousActivity) {
+        const activityTicks = candidateTick - previousActivity.startTick;
+        if (activityTicks > 0)
+          this.appendAgentMemory(
+            outcome.agentId,
+            candidateTick - 1,
+            "activity",
+            previousActivity.content,
+            previousActivity.startTick,
+            activityTicks,
+          );
       }
       world.llm.callsToday += 1;
       world.llm.totalCalls += 1;

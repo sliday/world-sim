@@ -20,7 +20,16 @@ interface AgentLongMemory {
   entries: number;
   compactions: number;
   summary: string;
-  recent: Array<{ seq: number; tick: number; kind: string; content: string; tokens: number }>;
+  recent: Array<{
+    seq: number;
+    tick: number;
+    kind: string;
+    content: string;
+    tokens: number;
+    firstTick?: number;
+    lastTick?: number;
+    repeatCount?: number;
+  }>;
 }
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -171,10 +180,15 @@ function longMemoryMarkup(agentId: string): string {
   const recent = memory.recent
     .slice(-6)
     .reverse()
-    .map(
-      (entry) =>
-        `<li><b>T${entry.tick} · ${escapeHtml(entry.kind.toUpperCase())}</b>${escapeHtml(entry.content)}</li>`,
-    )
+    .map((entry) => {
+      const repeats = Math.max(1, entry.repeatCount ?? 1);
+      const firstTick = entry.firstTick ?? entry.tick;
+      const lastTick = entry.lastTick ?? entry.tick;
+      const ticks =
+        repeats > 1 && firstTick !== lastTick ? `T${firstTick}–T${lastTick}` : `T${lastTick}`;
+      const count = repeats > 1 ? ` ×${repeats}` : "";
+      return `<li><b>${ticks} · ${escapeHtml(entry.kind.toUpperCase())}${count}</b>${escapeHtml(entry.content)}</li>`;
+    })
     .join("");
   return `<div class="agent-long-memory">
     <span>LONG MEMORY · ~${memory.estimatedTokens.toLocaleString()} / ${memory.tokenCap.toLocaleString()} TOKENS · ${memory.compactions} COMPACTIONS</span>
