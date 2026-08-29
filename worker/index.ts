@@ -46,14 +46,14 @@ interface Env {
   WORLD: DurableObjectNamespace<WorldRoom>;
   ASSETS: Fetcher;
   OPENROUTER_API_KEY?: string;
-  OPENROUTER_MODEL: string;
-  OPENROUTER_FALLBACK_MODEL?: string;
   LLM_ENABLED: string;
   LLM_PARALLELISM: string;
   MAX_LLM_CALLS_PER_DAY: string;
   WORLD_SEED: string;
   ALARM_INTERVAL_MS: string;
 }
+
+const OPENROUTER_FREE_MODEL = "openrouter/free";
 
 interface OpenRouterResponse {
   model?: string;
@@ -277,12 +277,6 @@ function positiveInteger(value: string | undefined, fallback: number, maximum: n
 
 function openRouterEnabled(env: Env): boolean {
   return env.LLM_ENABLED === "true" && Boolean(env.OPENROUTER_API_KEY);
-}
-
-function openRouterModels(env: Env): string[] {
-  const primary = env.OPENROUTER_MODEL?.trim() || "openrouter/free";
-  const fallback = env.OPENROUTER_FALLBACK_MODEL?.trim();
-  return fallback && fallback !== primary ? [primary, fallback] : [primary];
 }
 
 export class WorldRoom extends DurableObject<Env> {
@@ -635,7 +629,7 @@ export class WorldRoom extends DurableObject<Env> {
   }
 
   private publicSnapshot(world: WorldState): ReturnType<typeof publicSnapshot> {
-    const snapshot = publicSnapshot(world, openRouterEnabled(this.env), this.env.OPENROUTER_MODEL);
+    const snapshot = publicSnapshot(world, openRouterEnabled(this.env), OPENROUTER_FREE_MODEL);
     snapshot.diary = this.readWorldDiary(12);
     return snapshot;
   }
@@ -655,9 +649,9 @@ export class WorldRoom extends DurableObject<Env> {
       agents: world.agents.length,
       artifacts: world.artifacts.length,
       llm: openRouterEnabled(this.env) ? "openrouter-assisted" : "deterministic",
-      model: this.env.OPENROUTER_MODEL,
-      fallbackModel: this.env.OPENROUTER_FALLBACK_MODEL,
-      modelRoute: openRouterModels(this.env),
+      model: OPENROUTER_FREE_MODEL,
+      fallbackModel: null,
+      modelRoute: [OPENROUTER_FREE_MODEL],
       lastModel: world.llm.lastModel,
       calls: world.llm.totalCalls,
       callsToday: world.llm.callsToday,
@@ -1016,7 +1010,7 @@ export class WorldRoom extends DurableObject<Env> {
           "X-OpenRouter-Title": "Stigmergy World Diary",
         },
         body: JSON.stringify({
-          models: openRouterModels(this.env),
+          model: OPENROUTER_FREE_MODEL,
           session_id: "stigmergy-world-diary",
           messages: [
             {
@@ -1084,7 +1078,7 @@ export class WorldRoom extends DurableObject<Env> {
           "X-OpenRouter-Title": "Stigmergy World",
         },
         body: JSON.stringify({
-          models: openRouterModels(this.env),
+          model: OPENROUTER_FREE_MODEL,
           session_id: `stigmergy-${agentId}`,
           messages: [
             {

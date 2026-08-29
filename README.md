@@ -28,7 +28,7 @@ This is a live implementation track toward the paper's core mechanics, not a rep
 - **World authority:** one SQLite-backed Cloudflare Durable Object
 - **Live updates:** hibernatable WebSockets; one-second alarm-driven deterministic ticks
 - **Agent policy:** NullClaw-derived Zig policy core compiled to WebAssembly
-- **Model routing:** `openrouter/free` first, with `openrouter/auto` as an ordered fallback; server-side and schema-constrained
+- **Model routing:** `openrouter/free` only, hard-coded server-side with no paid fallback; schema-constrained
 - **Static hosting:** Cloudflare Workers Static Assets
 
 The full native NullClaw daemon does not run inside a Cloudflare Worker. This project uses NullClaw's official edge pattern: networking, secrets, validation, and consequences stay in the Worker host; a tiny Zig/WASM core selects the context policy used for occasional model decisions.
