@@ -39,3 +39,21 @@ export function clampOverlayAnchor(
   const maxY = Math.max(minY, viewportHeight - margin - halfHeight);
   return [Math.min(Math.max(screenX, minX), maxX), Math.min(Math.max(desiredScreenY, minY), maxY)];
 }
+
+export function fitOverlayText(
+  value: string,
+  maximumWidth: number,
+  measure: (text: string) => number,
+): string {
+  if (measure(value) <= maximumWidth) return value;
+  const ellipsis = "…";
+  if (measure(ellipsis) > maximumWidth) return "";
+  let low = 0;
+  let high = value.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (measure(`${value.slice(0, middle).trimEnd()}${ellipsis}`) <= maximumWidth) low = middle;
+    else high = middle - 1;
+  }
+  return `${value.slice(0, low).trimEnd()}${ellipsis}`;
+}

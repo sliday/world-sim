@@ -24,7 +24,13 @@ import {
   estimateMemoryTokens,
   memoryRunKey,
 } from "./memory-log";
-import { clampOverlayAnchor, easeToward, normalizeSettled, wrappedTarget } from "./motion";
+import {
+  clampOverlayAnchor,
+  easeToward,
+  fitOverlayText,
+  normalizeSettled,
+  wrappedTarget,
+} from "./motion";
 import type { AgentDirective, WorldState } from "./types";
 
 function engageAllAgentsInPersistentActivities(world: WorldState): void {
@@ -217,6 +223,15 @@ describe("deterministic consequence layer", () => {
     expect(clampOverlayAnchor(100, 50, 80, 320, 200)).toEqual([100, 50]);
     expect(clampOverlayAnchor(10, -20, 80, 320, 200)).toEqual([44, 13]);
     expect(clampOverlayAnchor(315, 250, 80, 320, 200)).toEqual([276, 187]);
+  });
+
+  it("keeps speech copy on one centered line inside its bubble", () => {
+    const measure = (value: string): number => value.length;
+    expect(fitOverlayText("Water north", 20, measure)).toBe("Water north");
+    const fitted = fitOverlayText("Ground plain here keep searching", 16, measure);
+    expect(fitted.endsWith("…")).toBe(true);
+    expect(measure(fitted)).toBeLessThanOrEqual(16);
+    expect(fitOverlayText("Energy low", 0, measure)).toBe("");
   });
 
   it("exchanges one bounded telegraphic sentence with a nearby bot", () => {

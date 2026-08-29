@@ -1,6 +1,12 @@
 import p5 from "p5";
 import { generateBotAppearance, type BotAppearance } from "./bot-appearance";
-import { clampOverlayAnchor, easeToward, normalizeSettled, wrappedTarget } from "./motion";
+import {
+  clampOverlayAnchor,
+  easeToward,
+  fitOverlayText,
+  normalizeSettled,
+  wrappedTarget,
+} from "./motion";
 import type {
   Agent,
   Artifact,
@@ -484,6 +490,7 @@ function drawSpeech(
       p.textFont("Pixelify Sans");
       p.textSize(10);
       const width = Math.min(166, p.textWidth(message.text) + 16);
+      const displayText = fitOverlayText(message.text, width - 12, (text) => p.textWidth(text));
       const screenX = (x - camera.x) * camera.zoom + p.width / 2;
       const screenY = (y - camera.y) * camera.zoom + p.height / 2;
       const botOverlayClearance = 7 * camera.zoom + 25;
@@ -501,7 +508,7 @@ function drawSpeech(
       p.rect(-width / 2, -9, width, 18, 3);
       p.fill(239, 243, 207, 255 * alpha);
       p.textAlign(p.CENTER, p.CENTER);
-      p.text(message.text, 0, 0, width - 8, 14);
+      p.text(displayText, 0, 0);
       p.pop();
     });
   });
