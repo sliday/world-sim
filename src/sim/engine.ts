@@ -472,20 +472,35 @@ function resourcePosition(
   material: MaterialKind,
   agent: Agent,
 ): { x: number; y: number } {
-  let best = agent;
-  let bestDistance = Number.POSITIVE_INFINITY;
+  const identitySeed = state.seed ^ (Number(agent.id.slice(1)) || 1);
+  let bestViable: { x: number; y: number } | undefined;
+  let bestViableScore = Number.POSITIVE_INFINITY;
+  let richestFallback: { x: number; y: number } | undefined;
+  let richestFallbackValue = Number.NEGATIVE_INFINITY;
+  let richestFallbackDistance = Number.POSITIVE_INFINITY;
   for (let y = 0; y < WORLD_HEIGHT; y += 2) {
     for (let x = 0; x < WORLD_WIDTH; x += 2) {
-      if (materialForTerrain[tileAt(state, x, y).terrain] !== material) continue;
+      const tile = tileAt(state, x, y);
+      if (materialForTerrain[tile.terrain] !== material) continue;
       const point = { x, y };
       const distance = distanceSquared(agent, point);
-      if (distance < bestDistance) {
-        best = { ...agent, ...point };
-        bestDistance = distance;
+      if (
+        tile.richness > richestFallbackValue ||
+        (tile.richness === richestFallbackValue && distance < richestFallbackDistance)
+      ) {
+        richestFallback = point;
+        richestFallbackValue = tile.richness;
+        richestFallbackDistance = distance;
+      }
+      if (tile.richness < 0.12) continue;
+      const score = distance + (1 - tile.richness) * 3 + hashNoise(identitySeed, x, y) * 2;
+      if (score < bestViableScore) {
+        bestViable = point;
+        bestViableScore = score;
       }
     }
   }
-  return { x: best.x, y: best.y };
+  return bestViable ?? richestFallback ?? { x: agent.x, y: agent.y };
 }
 
 function stepToward(agent: Agent, target: { x: number; y: number }, rng: Rng): void {

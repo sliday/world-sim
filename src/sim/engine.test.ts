@@ -381,6 +381,38 @@ describe("deterministic consequence layer", () => {
     expect(targets.size).toBeGreaterThan(1);
   });
 
+  it("leaves a depleted resource tile to seek viable richness", () => {
+    const world = createInitialWorld(260826081, 0);
+    const sampledTidal = world.terrain
+      .map((tile, index) => ({ tile, x: index % 96, y: Math.floor(index / 96) }))
+      .filter(({ tile, x, y }) => tile.terrain === "tidal" && x % 2 === 0 && y % 2 === 0);
+    const current = sampledTidal[0]!;
+    const viable = sampledTidal.find(
+      ({ x, y }) => Math.abs(x - current.x) + Math.abs(y - current.y) > 8,
+    )!;
+    for (const { tile } of sampledTidal) tile.richness = 0.05;
+    viable.tile.richness = 0.9;
+    const agent = world.agents[0]!;
+    agent.x = current.x;
+    agent.y = current.y;
+    agent.directive = {
+      ...agent.directive,
+      goal: "gather",
+      targetMaterial: "water",
+      actionId: "forage",
+    };
+    agent.script = {
+      ...agent.script,
+      actionId: "forage",
+      program: ["seek-resource"],
+    };
+    agent.scriptCursor = 0;
+
+    advanceWorld(world, 1);
+    expect({ x: agent.x, y: agent.y }).not.toEqual({ x: current.x, y: current.y });
+    expect(agent.script.lastResult).toBe("seeking water");
+  });
+
   it("gives agents stable hash-derived names from a broad universal catalog", () => {
     const world = createInitialWorld(260826081, 0);
     expect(agentNameCatalog.givenNames.length).toBeGreaterThan(180);
