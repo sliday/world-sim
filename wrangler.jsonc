@@ -1,0 +1,41 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "stigmergy-world",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-08-28",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"],
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "WORLD",
+        "class_name": "WorldRoom",
+      },
+    ],
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["WorldRoom"],
+    },
+  ],
+  "vars": {
+    "WORLD_SEED": "260826081",
+    "ALARM_INTERVAL_MS": "1000",
+    "TICKS_PER_ALARM": "1",
+    "LLM_ENABLED": "true",
+    "LLM_INTERVAL_TICKS": "20",
+    "LLM_PARALLELISM": "6",
+    "MAX_LLM_CALLS_PER_DAY": "21600",
+    "OPENROUTER_MODEL": "openrouter/free",
+    "OPENROUTER_FALLBACK_MODEL": "openrouter/auto",
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+  },
+}

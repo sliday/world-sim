@@ -1,0 +1,39 @@
+{
+  "name": "world-sim",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vp dev",
+    "dev:edge": "npm run build && wrangler dev",
+    "build:wasm": "zig build-exe worker/nullclaw/agent_core.zig -target wasm32-freestanding -fno-entry -rdynamic -O ReleaseSmall -femit-bin=worker/nullclaw/agent_core.wasm",
+    "build": "npm run build:wasm && tsc && tsc -p worker/tsconfig.json && vp build",
+    "check": "vp check && tsc -p worker/tsconfig.json && wrangler deploy --dry-run",
+    "test": "vp test --run",
+    "preview": "vp preview",
+    "deploy": "npm run build && wrangler deploy"
+  },
+  "dependencies": {
+    "@hackernoon/pixel-icon-library": "^1.1.0",
+    "p5": "^2.3.2"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.1.2",
+    "@cloudflare/workers-types": "^5.20260828.1",
+    "@types/p5": "^1.7.7",
+    "typescript": "~6.0.2",
+    "vite": "npm:@voidzero-dev/vite-plus-core@0.3.0",
+    "vite-plus": "0.3.0",
+    "wrangler": "^4.127.1"
+  },
+  "overrides": {
+    "vite": "npm:@voidzero-dev/vite-plus-core@0.3.0"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "npm",
+      "version": "12.0.2",
+      "onFail": "download"
+    }
+  }
+}
