@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { botPortraitSvg, generateBotAppearance } from "./bot-appearance";
-import { registerAction } from "./action-sandbox";
+import { modelActionPrimitives, registerAction } from "./action-sandbox";
 import {
   advanceWorld,
   applyDirective,
@@ -36,7 +36,7 @@ import {
   normalizeWorldDiaryLines,
   WORLD_DIARY_INTERVAL_TICKS,
 } from "./world-diary";
-import type { AgentDirective, WorldState } from "./types";
+import type { AgentActionDefinition, AgentDirective, WorldState } from "./types";
 
 function engageAllAgentsInPersistentActivities(world: WorldState): void {
   for (const [index, agent] of world.agents.entries()) {
@@ -250,6 +250,26 @@ describe("deterministic consequence layer", () => {
     expect(learner.crafts).toBe(1);
     const forage = world.actionLibrary.find((action) => action.id === "forage")!;
     expect(registerAction(world.actionLibrary, forage, agent.id, world.tick)).toBeUndefined();
+  });
+
+  it("rejects model-authored actions that use trusted crafting-control primitives", () => {
+    const world = createInitialWorld(260826081, 0);
+    expect(
+      registerAction(
+        world.actionLibrary,
+        {
+          name: "Recursive Mixer",
+          icon: "✦",
+          algorithm: "Attempt to invoke internal crafting orchestration as a reusable behavior.",
+          program: ["mix-local", "craft-local"],
+        },
+        world.agents[0]!.id,
+        world.tick,
+      ),
+    ).toBeUndefined();
+    expect(
+      world.actionLibrary.find((action) => action.id === "creative-session")?.program,
+    ).toContain("mix-local");
   });
 
   it("keeps curiosity unsatisfied and seeks purpose-bound missing ingredients", () => {
@@ -634,6 +654,59 @@ describe("deterministic consequence layer", () => {
     expect(agent.materialPurposes).toEqual({});
     expect(world.actionLibrary.map((action) => action.id)).toEqual(
       expect.arrayContaining(["craft", "creative-session"]),
+    );
+  });
+
+  it("canonicalizes and caps a full legacy action library without evicting base actions", () => {
+    const world = createInitialWorld(260826081, 0);
+    const legacyBase = world.actionLibrary.slice(0, 5);
+    const dynamicActions: AgentActionDefinition[] = Array.from({ length: 59 }, (_, index) => ({
+      id: `legacy-${index}`,
+      name: `Legacy ${index}`,
+      icon: "✧",
+      algorithm: `Legacy bounded behavior number ${index} retained through migration.`,
+      program: [
+        modelActionPrimitives[index % modelActionPrimitives.length]!,
+        modelActionPrimitives[Math.floor(index / modelActionPrimitives.length)]!,
+        "scan-local",
+      ],
+      authorId: "A001",
+      createdTick: index + 1,
+      uses: index,
+    }));
+    world.actionLibrary = [...legacyBase, ...dynamicActions];
+
+    ensureAgentOperatingSystem(world);
+    const baseIds = [
+      "survey",
+      "forage",
+      "fabricate",
+      "study",
+      "steward",
+      "craft",
+      "creative-session",
+    ];
+    expect(world.actionLibrary).toHaveLength(64);
+    expect(world.actionLibrary.slice(0, baseIds.length).map((action) => action.id)).toEqual(
+      baseIds,
+    );
+
+    expect(
+      registerAction(
+        world.actionLibrary,
+        {
+          name: "Newest Safe Action",
+          icon: "⟡",
+          algorithm: "Execute a distinct bounded four-step roaming behavior after migration.",
+          program: ["roam", "roam", "roam", "roam"],
+        },
+        "A002",
+        world.tick,
+      ),
+    ).toBeDefined();
+    expect(world.actionLibrary).toHaveLength(64);
+    expect(baseIds.every((id) => world.actionLibrary.some((action) => action.id === id))).toBe(
+      true,
     );
   });
 

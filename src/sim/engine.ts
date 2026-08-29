@@ -4,9 +4,9 @@ import {
   actionIdForGoal,
   assignableActionIcons,
   baseActionLibrary,
-  dedupeActionLibrary,
   initialDocuments,
   initialScript,
+  normalizeActionLibrary,
   registerAction,
   updateAgentScript,
   validateActionProposal,
@@ -278,11 +278,8 @@ export function createInitialWorld(seed = 260826081, now = Date.now()): WorldSta
 
 export function ensureAgentOperatingSystem(state: WorldState): WorldState {
   state.version = 4;
-  state.actionLibrary ??= baseActionLibrary();
-  for (const baseAction of baseActionLibrary()) {
-    if (!state.actionLibrary.some((action) => action.id === baseAction.id))
-      state.actionLibrary.push(baseAction);
-  }
+  state.actionLibrary ??= [];
+  const aliases = normalizeActionLibrary(state.actionLibrary);
   state.messages ??= [];
   for (const artifact of state.artifacts) {
     artifact.creatorId ??=
@@ -302,7 +299,6 @@ export function ensureAgentOperatingSystem(state: WorldState): WorldState {
       state.agents.push(createAgent(state.terrain, rng, state.seed, state.agents.length));
     state.rngState = rng.snapshot;
   }
-  const aliases = dedupeActionLibrary(state.actionLibrary);
   const baseIds = baseActionLibrary().map((action) => action.id);
   for (const agent of state.agents) {
     agent.trail ??= [{ x: agent.x, y: agent.y }];

@@ -13,8 +13,8 @@ import {
   recordFailedDecision,
 } from "../src/sim/engine";
 import {
-  actionPrimitives,
   assignableActionIcons,
+  modelActionPrimitives,
   validateActionProposal,
 } from "../src/sim/action-sandbox";
 import {
@@ -207,7 +207,7 @@ const agentDirectiveResponseFormat = {
             algorithm: { type: "string", minLength: 12, maxLength: 180 },
             program: {
               type: "array",
-              items: { type: "string", enum: actionPrimitives },
+              items: { type: "string", enum: modelActionPrimitives },
               minItems: 2,
               maxItems: 4,
             },
@@ -1204,7 +1204,9 @@ function isActionProposalShape(value: unknown): value is AgentActionProposal {
     assignableActionIcons.includes(proposal.icon as (typeof assignableActionIcons)[number]) &&
     Array.isArray(proposal.program) &&
     proposal.program.length <= 4 &&
-    proposal.program.every((step) => actionPrimitives.includes(step))
+    proposal.program.every((step) =>
+      modelActionPrimitives.includes(step as (typeof modelActionPrimitives)[number]),
+    )
   );
 }
 

@@ -10,7 +10,7 @@ import type {
 } from "./types";
 import { identityHash32 } from "./names";
 
-export const actionPrimitives = [
+export const modelActionPrimitives = [
   "scan-local",
   "roam",
   "gather-local",
@@ -20,6 +20,10 @@ export const actionPrimitives = [
   "inspect-local",
   "repair-local",
   "seek-artifact",
+] as const satisfies readonly ActionPrimitive[];
+
+export const actionPrimitives = [
+  ...modelActionPrimitives,
   "craft-local",
   "mix-local",
   "seek-crafting-material",
@@ -168,7 +172,9 @@ export function validateActionProposal(proposal: AgentActionProposal): boolean {
     assignableActionIcons.includes(proposal.icon as (typeof assignableActionIcons)[number]) &&
     proposal.program.length >= 2 &&
     proposal.program.length <= 4 &&
-    proposal.program.every((step) => actionPrimitives.includes(step))
+    proposal.program.every((step) =>
+      modelActionPrimitives.includes(step as (typeof modelActionPrimitives)[number]),
+    )
   );
 }
 
@@ -193,6 +199,28 @@ export function dedupeActionLibrary(library: AgentActionDefinition[]): Map<strin
     unique.push(action);
   }
   library.splice(0, library.length, ...unique);
+  return aliases;
+}
+
+function trimDynamicActions(library: AgentActionDefinition[]): void {
+  const baseIds = new Set(baseActions.map((action) => action.id));
+  while (library.length > 64) {
+    const oldestDynamic = library.findIndex((action) => !baseIds.has(action.id));
+    if (oldestDynamic < 0) break;
+    library.splice(oldestDynamic, 1);
+  }
+}
+
+export function normalizeActionLibrary(library: AgentActionDefinition[]): Map<string, string> {
+  const baseIds = new Set(baseActions.map((action) => action.id));
+  const canonicalBase = baseActionLibrary().map((action) => ({
+    ...action,
+    uses: library.find((candidate) => candidate.id === action.id)?.uses ?? action.uses,
+  }));
+  const normalized = [...canonicalBase, ...library.filter((action) => !baseIds.has(action.id))];
+  const aliases = dedupeActionLibrary(normalized);
+  trimDynamicActions(normalized);
+  library.splice(0, library.length, ...normalized);
   return aliases;
 }
 
@@ -221,7 +249,7 @@ export function registerAction(
     recipe: recipe ? [...recipe] : undefined,
   };
   library.push(action);
-  if (library.length > 64) library.splice(baseActions.length, library.length - 64);
+  trimDynamicActions(library);
   return action;
 }
 
