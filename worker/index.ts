@@ -4,11 +4,13 @@ import { generateAgentName } from "../src/sim/names";
 import {
   advanceWorld,
   applyDirective,
-  chooseDecisionAgents,
   createInitialWorld,
+  decisionAgentsDue,
   decisionObservation,
   ensureAgentOperatingSystem,
+  MODEL_MACROTURN_INTERVAL_TICKS,
   publicSnapshot,
+  recordFailedDecision,
 } from "../src/sim/engine";
 import {
   actionPrimitives,
@@ -37,12 +39,10 @@ interface Env {
   OPENROUTER_MODEL: string;
   OPENROUTER_FALLBACK_MODEL?: string;
   LLM_ENABLED: string;
-  LLM_INTERVAL_TICKS: string;
   LLM_PARALLELISM: string;
   MAX_LLM_CALLS_PER_DAY: string;
   WORLD_SEED: string;
   ALARM_INTERVAL_MS: string;
-  TICKS_PER_ALARM: string;
 }
 
 interface OpenRouterResponse {
@@ -60,6 +60,16 @@ interface ModelDirectiveResult {
   directive: AgentDirective;
   model?: string;
   cost: number;
+}
+
+class ModelDecisionError extends Error {
+  readonly retryable: boolean;
+
+  constructor(message: string, retryable: boolean) {
+    super(message);
+    this.name = "ModelDecisionError";
+    this.retryable = retryable;
+  }
 }
 
 interface MemorySummaryRow {
@@ -388,7 +398,7 @@ export class WorldRoom extends DurableObject<Env> {
       memoryTokenCapPerAgent: AGENT_MEMORY_TOKEN_CAP,
       worldDecisionIntervalMs: positiveInteger(this.env.ALARM_INTERVAL_MS, 1_000, 60_000),
       decisionsPerWorldTick: world.agents.length,
-      modelMacroturnIntervalTicks: positiveInteger(this.env.LLM_INTERVAL_TICKS, 20, 20_000),
+      modelMacroturnIntervalTicks: MODEL_MACROTURN_INTERVAL_TICKS,
     };
   }
 
@@ -408,12 +418,9 @@ export class WorldRoom extends DurableObject<Env> {
       const world = await this.load();
       const previousMessages = new Set(world.messages.map((message) => message.id));
       const previousEvents = new Set(world.events.map((event) => event.id));
-      const intervalMs = positiveInteger(this.env.ALARM_INTERVAL_MS, 1_000, 60_000);
-      const configuredSteps = positiveInteger(this.env.TICKS_PER_ALARM, 1, 24);
-      const elapsedSteps = Math.floor((Date.now() - world.lastAdvancedAt) / intervalMs);
-      const steps = Math.max(configuredSteps, Math.min(24, elapsedSteps));
-      advanceWorld(world, steps);
-      await this.maybeAskModel(world, steps);
+      const candidateTick = world.tick + 1;
+      const canAdvance = await this.maybeAskModel(world, candidateTick);
+      if (canAdvance) advanceWorld(world, 1);
       for (const message of world.messages.filter(
         (candidate) => !previousMessages.has(candidate.id),
       )) {
@@ -468,30 +475,37 @@ export class WorldRoom extends DurableObject<Env> {
     }
   }
 
-  private async maybeAskModel(world: WorldState, advancedSteps: number): Promise<void> {
-    if (!openRouterEnabled(this.env)) return;
-    const interval = positiveInteger(this.env.LLM_INTERVAL_TICKS, 20, 20_000);
-    if (world.tick === 0 || world.tick % interval >= advancedSteps) return;
-
+  private async maybeAskModel(world: WorldState, candidateTick: number): Promise<boolean> {
+    const dueAgents = decisionAgentsDue(world, candidateTick);
+    if (!dueAgents.length) return true;
+    if (!openRouterEnabled(this.env)) {
+      world.llm.lastError = `${dueAgents.length} decisions waiting · OpenRouter disabled`;
+      return false;
+    }
     const today = new Date().toISOString().slice(0, 10);
     if (world.llm.callDay !== today) {
       world.llm.callDay = today;
       world.llm.callsToday = 0;
     }
-    const dailyLimit = positiveInteger(this.env.MAX_LLM_CALLS_PER_DAY, 21_600, 86_400);
+    const dailyLimit = positiveInteger(this.env.MAX_LLM_CALLS_PER_DAY, 21_600, 500_000);
     const remaining = dailyLimit - world.llm.callsToday;
-    if (remaining <= 0) return;
+    if (remaining <= 0) {
+      world.llm.lastError = `${dueAgents.length} decisions waiting · daily model limit reached`;
+      return false;
+    }
 
     // Six matches Cloudflare's simultaneous outbound-connection ceiling.
-    // Requests share one world tick, then apply in stable agent order so
+    // Fixed phases schedule at most two agents per tick. Requests share one
+    // candidate tick, then apply in stable agent order so
     // provider response timing cannot change simulation ordering.
     const parallelism = Math.min(positiveInteger(this.env.LLM_PARALLELISM, 6, 6), remaining);
-    const agents = chooseDecisionAgents(world, parallelism);
+    const agents = dueAgents.slice(0, parallelism);
     const policyCore = this.nullclawPolicy();
     const outcomes = await Promise.all(
       agents.map(async (agent) => {
         const observation = {
           ...decisionObservation(world, agent),
+          scheduledDecisionTick: candidateTick,
           longTermMemory: this.modelMemoryContext(agent.id),
         };
         const serialized = JSON.stringify(observation);
@@ -511,18 +525,35 @@ export class WorldRoom extends DurableObject<Env> {
             result: await this.requestDirective(agent.id, serialized, policyLabel),
           };
         } catch (error) {
+          const decisionError =
+            error instanceof ModelDecisionError
+              ? error
+              : new ModelDecisionError(
+                  error instanceof Error ? error.message : "OpenRouter request failed",
+                  true,
+                );
           return {
             agentId: agent.id,
-            error: error instanceof Error ? error.message : "OpenRouter request failed",
+            error: decisionError.message,
+            retryable: decisionError.retryable,
           };
         }
       }),
     );
 
     const errors: string[] = [];
+    let retryableFailure = agents.length < dueAgents.length;
     for (const outcome of outcomes) {
       if (!outcome.result) {
         errors.push(`${outcome.agentId}: ${outcome.error}`);
+        if (outcome.retryable) retryableFailure = true;
+        else
+          recordFailedDecision(
+            world,
+            outcome.agentId,
+            candidateTick,
+            outcome.error ?? "invalid model decision",
+          );
         continue;
       }
       const agent = world.agents.find((candidate) => candidate.id === outcome.agentId);
@@ -538,15 +569,32 @@ export class WorldRoom extends DurableObject<Env> {
           new TextEncoder().encode(candidate.algorithm).length,
         ) === 1,
       );
-      applyDirective(world, outcome.agentId, outcome.result.directive, extensionFacilitated);
+      const committed = applyDirective(
+        world,
+        outcome.agentId,
+        outcome.result.directive,
+        extensionFacilitated,
+        candidateTick,
+      );
+      if (!committed) {
+        errors.push(`${outcome.agentId}: validated directive could not be committed`);
+        recordFailedDecision(
+          world,
+          outcome.agentId,
+          candidateTick,
+          "validated directive could not be committed",
+        );
+        continue;
+      }
       world.llm.callsToday += 1;
       world.llm.totalCalls += 1;
       world.llm.totalCost += outcome.result.cost;
       world.llm.lastModel = outcome.result.model;
     }
     world.llm.lastError = errors.length
-      ? `${errors.length}/${agents.length} decisions failed · ${errors.at(-1)}`.slice(0, 160)
+      ? `${errors.length}/${dueAgents.length} decisions failed · ${errors.at(-1)}`.slice(0, 160)
       : undefined;
+    return !retryableFailure;
   }
 
   private async requestDirective(
@@ -573,7 +621,7 @@ export class WorldRoom extends DurableObject<Env> {
             {
               role: "system",
               content:
-                "You are one initially identical embodied agent in a persistent material world. SOUL.md is policy, USER.md names the beneficiary, and MEMORY.md is fallible experience. Choose an existing actionId from availableActions and one Unicode icon. You may propose one new action only when local evidence suggests a useful reusable algorithm; never restate or rename an available action. New programs may compose only listed bounded primitives; they cannot create resources or declare outcomes. If no new action is warranted, return actionProposal with empty name and algorithm, the chosen icon, and an empty program. speech must exchange one useful observed fact in one 3-8 word sentence of basic caveman telegraphic English, like 'Water low here, seek tidal.' Never use two sentences. The deterministic sandbox executes code and the world decides consequences. note: max 12 words.",
+                "You are one initially identical embodied agent in a persistent material world. This is your fixed scheduled macroturn. The activity you choose now repeats cyclically until your next AI opportunity in 60 world ticks. SOUL.md is policy, USER.md names the beneficiary, and MEMORY.md is fallible experience. Choose an existing actionId from availableActions and one Unicode icon. You may propose one new action only when local evidence suggests a useful reusable algorithm; never restate or rename an available action. New programs may compose only listed bounded primitives; they cannot create resources or declare outcomes. If no new action is warranted, return actionProposal with empty name and algorithm, the chosen icon, and an empty program. speech must exchange one useful observed fact in one 3-8 word sentence of basic caveman telegraphic English, like 'Water low here, seek tidal.' Never use two sentences. The deterministic sandbox executes one primitive per tick and the world decides consequences. note: max 12 words.",
             },
             {
               role: "user",
@@ -586,17 +634,38 @@ export class WorldRoom extends DurableObject<Env> {
           temperature: 0.72,
         }),
       });
-      const data = (await response.json()) as OpenRouterResponse;
-      if (!response.ok)
-        throw new Error(data.error?.message ?? `OpenRouter HTTP ${response.status}`);
+      let data: OpenRouterResponse;
+      try {
+        data = (await response.json()) as OpenRouterResponse;
+      } catch {
+        throw new ModelDecisionError("OpenRouter returned invalid response JSON", true);
+      }
+      if (!response.ok) {
+        const retryable =
+          response.status === 408 ||
+          response.status === 409 ||
+          response.status === 425 ||
+          response.status === 429 ||
+          response.status >= 500;
+        throw new ModelDecisionError(
+          data.error?.message ?? `OpenRouter HTTP ${response.status}`,
+          retryable,
+        );
+      }
       const choice = data.choices?.[0];
       const content = choice?.message?.content;
       if (!content)
-        throw new Error(
+        throw new ModelDecisionError(
           choice?.error?.message ??
             `OpenRouter returned no directive (${choice?.finish_reason ?? "no choice"})`,
+          true,
         );
-      const parsed = JSON.parse(content) as Partial<AgentDirective>;
+      let parsed: Partial<AgentDirective>;
+      try {
+        parsed = JSON.parse(content) as Partial<AgentDirective>;
+      } catch {
+        throw new ModelDecisionError("OpenRouter directive was not valid JSON", false);
+      }
       const actionProposal = parsed.actionProposal as AgentActionProposal | undefined;
       if (
         !isGoal(parsed.goal) ||
@@ -607,7 +676,7 @@ export class WorldRoom extends DurableObject<Env> {
         !assignableActionIcons.includes(parsed.icon as (typeof assignableActionIcons)[number]) ||
         !isActionProposalShape(actionProposal)
       ) {
-        throw new Error("OpenRouter directive failed local schema validation");
+        throw new ModelDecisionError("OpenRouter directive failed local schema validation", false);
       }
       return {
         directive: {
@@ -625,6 +694,12 @@ export class WorldRoom extends DurableObject<Env> {
         model: data.model,
         cost: data.usage?.cost ?? 0,
       };
+    } catch (error) {
+      if (error instanceof ModelDecisionError) throw error;
+      throw new ModelDecisionError(
+        error instanceof Error ? error.message : "OpenRouter transport failed",
+        true,
+      );
     } finally {
       clearTimeout(timeout);
     }

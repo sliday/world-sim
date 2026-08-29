@@ -6,18 +6,50 @@ import {
   applyDirective,
   balancedPortfolioScore,
   calculateMetrics,
-  chooseDecisionAgents,
   controllerBehaviorDiffers,
   createInitialWorld,
+  decisionAgentsDue,
+  decisionPhaseForAgent,
   deliverSpeech,
   ensureAgentOperatingSystem,
   isArtifactContact,
+  MODEL_MACROTURN_INTERVAL_TICKS,
+  nextScheduledDecisionTick,
   normalizeSpeech,
 } from "./engine";
 import { agentNameCatalog, generateAgentName } from "./names";
 import { compactMemoryLog, estimateMemoryTokens } from "./memory-log";
 import { clampOverlayAnchor, easeToward, normalizeSettled, wrappedTarget } from "./motion";
-import type { AgentDirective } from "./types";
+import type { AgentDirective, WorldState } from "./types";
+
+function engageAllAgentsInPersistentActivities(world: WorldState): void {
+  for (const [index, agent] of world.agents.entries()) {
+    const activity = index % 3;
+    const goal = activity === 0 ? "build" : activity === 1 ? "inspect" : "maintain";
+    const actionId = activity === 0 ? "fabricate" : activity === 1 ? "study" : "steward";
+    agent.inventory = {
+      water: 80,
+      fungus: 80,
+      mineral: 80,
+      cellulose: 80,
+      chitin: 80,
+    };
+    applyDirective(
+      world,
+      agent.id,
+      {
+        goal,
+        targetMaterial: "mineral",
+        controllerAction: "remediate",
+        note: "run one persistent local material activity",
+        source: "openrouter",
+        actionId,
+      },
+      false,
+      agent.nextDecisionTick,
+    );
+  }
+}
 
 function signature(steps: number): unknown {
   const world = createInitialWorld(42, 0);
@@ -66,12 +98,19 @@ describe("deterministic consequence layer", () => {
     expect(world.agents.at(-1)?.id).toBe("A100");
   });
 
-  it("updates every agent decision and trajectory observation each world tick", () => {
+  it("executes one activity primitive and records every trajectory each world tick", () => {
     const world = createInitialWorld(260826081, 0);
+    const first = world.agents[0]!;
+    const initialPosition = { x: first.x, y: first.y };
     advanceWorld(world, 1);
 
-    expect(world.agents.every((agent) => agent.script.updatedTick === 1)).toBe(true);
+    expect(first.scriptCursor).toBe(1);
+    expect({ x: first.x, y: first.y }).toEqual(initialPosition);
+    expect(world.agents.every((agent) => agent.script.updatedTick === 0)).toBe(true);
     expect(world.agents.every((agent) => agent.trajectory.observedTicks === 1)).toBe(true);
+    advanceWorld(world, 1);
+    expect(first.scriptCursor).toBe(0);
+    expect({ x: first.x, y: first.y }).not.toEqual(initialPosition);
     expect(calculateMetrics(world).meanRegionsVisited).toBeGreaterThan(0);
   });
 
@@ -94,6 +133,7 @@ describe("deterministic consequence layer", () => {
   it("maintains per-agent operating files and executes facilitated bounded actions", () => {
     const world = createInitialWorld(260826081, 0);
     const agent = world.agents[0]!;
+    const decisionTick = agent.nextDecisionTick;
     expect(agent.documents.soulMd).toContain("# SOUL.md");
     expect(agent.documents.memoryMd).toContain("# MEMORY.md");
     expect(agent.documents.userMd).toContain("# USER.md");
@@ -119,15 +159,17 @@ describe("deterministic consequence layer", () => {
           },
         },
         true,
+        decisionTick,
       ),
     ).toBe(true);
     expect(world.actionLibrary).toHaveLength(before + 1);
     expect(agent.knownActionIds).toContain(agent.directive.actionId);
-    advanceWorld(world, 1);
-    expect(agent.script.updatedTick).toBe(1);
+    expect(agent.script.updatedTick).toBe(decisionTick);
     expect(agent.script.revision).toBe(1);
     expect(agent.script.icon).toBe("✦");
-    expect(agent.documents.memoryMd).toContain("T1:");
+    expect(agent.scriptCursor).toBe(0);
+    expect(agent.nextDecisionTick).toBe(decisionTick + MODEL_MACROTURN_INTERVAL_TICKS);
+    expect(agent.documents.memoryMd).toContain(`T${decisionTick}:`);
     const forage = world.actionLibrary.find((action) => action.id === "forage")!;
     expect(registerAction(world.actionLibrary, forage, agent.id, world.tick)).toBeUndefined();
   });
@@ -195,12 +237,13 @@ describe("deterministic consequence layer", () => {
 
   it("creates persistent artifacts and executable lineages without assigned roles", () => {
     const world = createInitialWorld(260826081, 0);
-    advanceWorld(world, 3_200);
+    engageAllAgentsInPersistentActivities(world);
+    advanceWorld(world, 800);
     expect(world.artifacts.length).toBeGreaterThan(4);
     expect(world.artifacts.some((artifact) => artifact.parentId && artifact.generation > 1)).toBe(
       true,
     );
-    expect(new Set(world.agents.map((agent) => agent.mode)).size).toBeGreaterThan(1);
+    expect(new Set(world.agents.map((agent) => agent.script.actionId)).size).toBeGreaterThan(1);
     expect(world.artifacts.some((artifact) => artifact.uses > 0)).toBe(true);
     expect(world.artifacts.some((artifact) => artifact.adopters.length > 0)).toBe(true);
     for (const artifact of world.artifacts) {
@@ -228,7 +271,8 @@ describe("deterministic consequence layer", () => {
 
   it("keeps resources and health inside the physical schema", () => {
     const world = createInitialWorld(17, 0);
-    advanceWorld(world, 2_400);
+    engageAllAgentsInPersistentActivities(world);
+    advanceWorld(world, 800);
     for (const agent of world.agents) {
       for (const amount of Object.values(agent.inventory)) expect(amount).toBeGreaterThanOrEqual(0);
     }
@@ -264,16 +308,70 @@ describe("deterministic consequence layer", () => {
     expect(world.agents[0]?.directive.source).toBe("instinct");
   });
 
-  it("selects a distinct deterministic batch of agents awaiting decisions", () => {
+  it("gives every agent one fixed staggered decision opportunity per 60 ticks", () => {
     const world = createInitialWorld(12, 0);
-    world.agents[0]!.lastDecisionTick = 10;
-    const batch = chooseDecisionAgents(world, 6);
-    expect(batch).toHaveLength(6);
-    expect(new Set(batch.map((agent) => agent.id)).size).toBe(6);
-    expect(batch.some((agent) => agent.id === world.agents[0]!.id)).toBe(false);
-    expect(batch.map((agent) => agent.id)).toEqual(
-      chooseDecisionAgents(world, 6).map((agent) => agent.id),
+    const scheduled = Array.from({ length: MODEL_MACROTURN_INTERVAL_TICKS }, (_, index) =>
+      decisionAgentsDue(world, index + 1),
     );
+    const ids = scheduled.flatMap((agents) => agents.map((agent) => agent.id));
+
+    expect(ids).toHaveLength(100);
+    expect(new Set(ids).size).toBe(100);
+    expect(Math.max(...scheduled.map((agents) => agents.length))).toBe(2);
+    for (const agent of world.agents) {
+      expect(agent.decisionPhase).toBe(decisionPhaseForAgent(agent.id));
+      expect(agent.nextDecisionTick).toBe(nextScheduledDecisionTick(0, agent.decisionPhase));
+    }
+  });
+
+  it("preserves an activity between scheduled successful AI decisions", () => {
+    const world = createInitialWorld(13, 0);
+    const agent = world.agents[0]!;
+    const directive = structuredClone(agent.directive);
+    const revision = agent.script.revision;
+    const updatedTick = agent.script.updatedTick;
+
+    expect(
+      applyDirective(
+        world,
+        agent.id,
+        { ...agent.directive, goal: "gather", note: "unscheduled change", source: "openrouter" },
+        false,
+        agent.nextDecisionTick - 1,
+      ),
+    ).toBe(false);
+    advanceWorld(world, MODEL_MACROTURN_INTERVAL_TICKS - 1);
+    expect(agent.directive).toEqual(directive);
+    expect(agent.script.revision).toBe(revision);
+    expect(agent.script.updatedTick).toBe(updatedTick);
+  });
+
+  it("migrates existing worlds to persistent per-agent schedules without resetting activity", () => {
+    const world = createInitialWorld(14, 0);
+    const agent = world.agents[37]!;
+    const directive = structuredClone(agent.directive);
+    const script = structuredClone(agent.script);
+    world.tick = 137;
+    const legacy = world as unknown as {
+      version: number;
+      agents: Array<{
+        decisionPhase?: number;
+        nextDecisionTick?: number;
+        scriptCursor?: number;
+      }>;
+    };
+    legacy.version = 2;
+    delete legacy.agents[37]!.decisionPhase;
+    delete legacy.agents[37]!.nextDecisionTick;
+    delete legacy.agents[37]!.scriptCursor;
+
+    ensureAgentOperatingSystem(world);
+    expect(world.version).toBe(3);
+    expect(agent.directive).toEqual(directive);
+    expect(agent.script).toEqual(script);
+    expect(agent.decisionPhase).toBe(decisionPhaseForAgent(agent.id));
+    expect(agent.nextDecisionTick).toBe(nextScheduledDecisionTick(world.tick, agent.decisionPhase));
+    expect(agent.scriptCursor).toBe(0);
   });
 
   it("compacts durable episodic memory under a hard token budget", () => {

@@ -131,6 +131,9 @@ export interface Agent {
   forkedProgramId?: string;
   directive: AgentDirective;
   lastDecisionTick: number;
+  decisionPhase: number;
+  nextDecisionTick: number;
+  scriptCursor: number;
   trail: Vec2[];
   trajectory: AgentTrajectory;
   color: number;
@@ -198,7 +201,7 @@ export interface WorldMetrics {
 }
 
 export interface WorldState {
-  version: 2;
+  version: 3;
   seed: number;
   rngState: number;
   tick: number;

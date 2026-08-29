@@ -42,6 +42,7 @@ const controllerActions: readonly ControllerAction[] = [
 ];
 const goals: readonly AgentGoal[] = ["explore", "gather", "build", "inspect", "maintain"];
 export const ARTIFACT_CONTACT_RADIUS = 3;
+export const MODEL_MACROTURN_INTERVAL_TICKS = 60;
 const emptyInventory = (): Inventory => ({
   water: 0,
   fungus: 0,
@@ -170,16 +171,6 @@ function createStations(terrain: Tile[], rng: Rng): Station[] {
   }));
 }
 
-function instinctDirective(rng: Rng): AgentDirective {
-  return {
-    goal: rng.pick(goals),
-    targetMaterial: rng.pick(materials),
-    controllerAction: rng.pick(controllerActions),
-    note: "local observation only",
-    source: "instinct",
-  };
-}
-
 function initialDirective(): AgentDirective {
   return {
     goal: "explore",
@@ -210,6 +201,9 @@ function createAgent(terrain: Tile[], rng: Rng, seed: number, index: number): Ag
     builds: 0,
     directive: initialDirective(),
     lastDecisionTick: 0,
+    decisionPhase: decisionPhaseForAgent(id),
+    nextDecisionTick: nextScheduledDecisionTick(0, decisionPhaseForAgent(id)),
+    scriptCursor: 0,
     trail: [position],
     trajectory: {
       pathLength: 0,
@@ -235,7 +229,7 @@ export function createInitialWorld(seed = 260826081, now = Date.now()): WorldSta
   const rng = new Rng(seed);
   const terrain = createTerrain(seed);
   const state: WorldState = {
-    version: 2,
+    version: 3,
     seed,
     rngState: rng.snapshot,
     tick: 0,
@@ -264,6 +258,7 @@ export function createInitialWorld(seed = 260826081, now = Date.now()): WorldSta
 }
 
 export function ensureAgentOperatingSystem(state: WorldState): WorldState {
+  state.version = 3;
   state.actionLibrary ??= baseActionLibrary();
   state.messages ??= [];
   for (const artifact of state.artifacts) {
@@ -303,6 +298,15 @@ export function ensureAgentOperatingSystem(state: WorldState): WorldState {
     agent.icon ??= "◎";
     agent.documents ??= initialDocuments(agent.name);
     agent.script ??= initialScript();
+    agent.decisionPhase = Number.isInteger(agent.decisionPhase)
+      ? ((agent.decisionPhase % MODEL_MACROTURN_INTERVAL_TICKS) + MODEL_MACROTURN_INTERVAL_TICKS) %
+        MODEL_MACROTURN_INTERVAL_TICKS
+      : decisionPhaseForAgent(agent.id);
+    agent.nextDecisionTick =
+      Number.isInteger(agent.nextDecisionTick) && agent.nextDecisionTick > state.tick
+        ? agent.nextDecisionTick
+        : nextScheduledDecisionTick(state.tick, agent.decisionPhase);
+    agent.scriptCursor = Number.isInteger(agent.scriptCursor) ? Math.max(0, agent.scriptCursor) : 0;
     agent.knownActionIds ??= [...baseIds];
     agent.heardMessages ??= [];
     agent.directive.actionId =
@@ -312,6 +316,39 @@ export function ensureAgentOperatingSystem(state: WorldState): WorldState {
     for (const id of baseIds) if (!agent.knownActionIds.includes(id)) agent.knownActionIds.push(id);
   }
   return state;
+}
+
+export function decisionPhaseForAgent(
+  agentId: string,
+  interval = MODEL_MACROTURN_INTERVAL_TICKS,
+): number {
+  const ordinal = Number(agentId.slice(1));
+  if (!Number.isInteger(ordinal) || ordinal < 1) return 0;
+  return Math.floor(((ordinal - 1) * interval) / AGENT_COUNT);
+}
+
+export function nextScheduledDecisionTick(
+  currentTick: number,
+  phase: number,
+  interval = MODEL_MACROTURN_INTERVAL_TICKS,
+): number {
+  const normalizedPhase = ((phase % interval) + interval) % interval;
+  const delta = (normalizedPhase - (currentTick % interval) + interval) % interval;
+  return currentTick + (delta === 0 ? interval : delta);
+}
+
+export function decisionAgentsDue(
+  state: WorldState,
+  candidateTick: number,
+  interval = MODEL_MACROTURN_INTERVAL_TICKS,
+): Agent[] {
+  return state.agents
+    .filter(
+      (agent) =>
+        agent.nextDecisionTick === candidateTick &&
+        (candidateTick - agent.decisionPhase) % interval === 0,
+    )
+    .sort((a, b) => a.id.localeCompare(b.id));
 }
 
 function emptyMetrics(): WorldMetrics {
@@ -341,10 +378,11 @@ function addEvent(
   text: string,
   x: number,
   y: number,
+  tick = state.tick,
 ): void {
   state.events.unshift({
-    id: `${state.tick}-${state.rngState}-${state.events.length}`,
-    tick: state.tick,
+    id: `${tick}-${state.rngState}-${state.events.length}`,
+    tick,
     kind,
     text,
     x,
@@ -359,7 +397,12 @@ export function normalizeSpeech(value: string): string {
   return `${words.length ? words.join(" ") : "No clear sign here"}.`;
 }
 
-export function deliverSpeech(state: WorldState, fromId: string, rawSpeech: string): boolean {
+export function deliverSpeech(
+  state: WorldState,
+  fromId: string,
+  rawSpeech: string,
+  tick = state.tick,
+): boolean {
   const sender = state.agents.find((agent) => agent.id === fromId);
   if (!sender) return false;
   const recipient = state.agents
@@ -370,11 +413,11 @@ export function deliverSpeech(state: WorldState, fromId: string, rawSpeech: stri
   if (!recipient) return false;
   const text = normalizeSpeech(rawSpeech);
   sender.lastSpeech = text;
-  recipient.heardMessages.push({ tick: state.tick, fromId, text });
+  recipient.heardMessages.push({ tick, fromId, text });
   recipient.heardMessages = recipient.heardMessages.slice(-4);
   state.messages.unshift({
-    id: `M${state.tick}-${fromId}-${recipient.id}-${state.messages.length}`,
-    tick: state.tick,
+    id: `M${tick}-${fromId}-${recipient.id}-${state.messages.length}`,
+    tick,
     fromId,
     toId: recipient.id,
     text,
@@ -393,24 +436,6 @@ function localSpeech(state: WorldState, agent: Agent): string {
   if (artifact && distanceSquared(agent, artifact) <= 9)
     return `${artifact.material} machine works here, come see.`;
   return "Ground plain here, keep searching.";
-}
-
-function chooseGoal(agent: Agent, state: WorldState, rng: Rng): AgentGoal {
-  const carried = totalInventory(agent.inventory);
-  const nearbyArtifact = nearest(agent, state.artifacts);
-  const artifactDistance = nearbyArtifact
-    ? distanceSquared(agent, nearbyArtifact)
-    : Number.POSITIVE_INFINITY;
-  if (agent.energy < 0.28) return "gather";
-  if (carried >= 8 && (artifactDistance < 100 || rng.chance(0.35))) return "build";
-  if (nearbyArtifact && artifactDistance <= 9 && rng.chance(0.55))
-    return rng.chance(0.58) ? "inspect" : "maintain";
-  if (carried < 4 && rng.chance(0.46)) return "gather";
-  return "explore";
-}
-
-function totalInventory(inventory: Inventory): number {
-  return Object.values(inventory).reduce((total, amount) => total + amount, 0);
 }
 
 function resourcePosition(
@@ -639,97 +664,79 @@ function inspectOrMaintain(agent: Agent, state: WorldState, rng: Rng, repair: bo
   } else {
     agent.mode = "forking";
     agent.forkedProgramId = artifact.id;
-    agent.directive = {
-      ...agent.directive,
-      targetMaterial: artifact.material,
-      controllerAction: artifact.controller.action,
-      goal: "build",
-      note: `observed ${artifact.id} in the world`,
-      source: "instinct",
-    };
   }
   return true;
 }
 
 function executeAgentScript(agent: Agent, state: WorldState, rng: Rng): boolean {
-  for (const instruction of agent.script.program) {
-    if (instruction === "scan-local") {
-      agent.script.lastResult = `scanned ${tileAt(state, agent.x, agent.y).terrain}`;
-      continue;
-    }
-    if (instruction === "gather-local" && gather(agent, state, rng)) {
+  if (!agent.script.program.length) {
+    agent.script.lastResult = "activity has no bounded primitives";
+    return false;
+  }
+  const index = agent.scriptCursor % agent.script.program.length;
+  const instruction = agent.script.program[index]!;
+  agent.scriptCursor = (index + 1) % agent.script.program.length;
+  if (instruction === "scan-local") {
+    agent.script.lastResult = `scanned ${tileAt(state, agent.x, agent.y).terrain}`;
+    return true;
+  }
+  if (instruction === "gather-local") {
+    if (gather(agent, state, rng)) {
       agent.script.lastResult = "gathered local material";
       return true;
     }
-    if (instruction === "build-local" && build(agent, state, rng)) {
+  } else if (instruction === "build-local") {
+    if (build(agent, state, rng)) {
       agent.script.lastResult = "constructed an artifact";
       return true;
     }
-    if (instruction === "inspect-local" && inspectOrMaintain(agent, state, rng, false)) {
+  } else if (instruction === "inspect-local") {
+    if (inspectOrMaintain(agent, state, rng, false)) {
       agent.script.lastResult = "inspected an artifact";
       return true;
     }
-    if (instruction === "repair-local" && inspectOrMaintain(agent, state, rng, true)) {
+  } else if (instruction === "repair-local") {
+    if (inspectOrMaintain(agent, state, rng, true)) {
       agent.script.lastResult = "maintained an artifact";
       return true;
     }
-    if (instruction === "seek-resource") {
-      stepToward(agent, resourcePosition(state, agent.directive.targetMaterial, agent), rng);
-      agent.mode = "surveying";
-      agent.script.lastResult = `seeking ${agent.directive.targetMaterial}`;
-      return true;
-    }
-    if (instruction === "seek-station") {
-      const station = nearest(agent, state.stations);
-      if (!station) continue;
+  } else if (instruction === "seek-resource") {
+    stepToward(agent, resourcePosition(state, agent.directive.targetMaterial, agent), rng);
+    agent.mode = "surveying";
+    agent.script.lastResult = `seeking ${agent.directive.targetMaterial}`;
+    return true;
+  } else if (instruction === "seek-station") {
+    const station = nearest(agent, state.stations);
+    if (station) {
       stepToward(agent, station, rng);
       agent.mode = "surveying";
       agent.script.lastResult = `seeking ${station.kind}`;
       return true;
     }
-    if (instruction === "seek-artifact") {
-      const artifact = nearest(agent, state.artifacts);
-      if (!artifact) continue;
+  } else if (instruction === "seek-artifact") {
+    const artifact = nearest(agent, state.artifacts);
+    if (artifact) {
       stepToward(agent, artifact, rng);
       agent.mode = "surveying";
       agent.script.lastResult = `seeking ${artifact.id}`;
       return true;
     }
-    if (instruction === "roam") {
-      roam(agent, rng);
-      agent.mode = "surveying";
-      agent.script.lastResult = "surveyed a neighboring tile";
-      return true;
-    }
+  } else if (instruction === "roam") {
+    roam(agent, rng);
+    agent.mode = "surveying";
+    agent.script.lastResult = "surveyed a neighboring tile";
+    return true;
   }
-  agent.script.lastResult = "no program precondition passed";
+  agent.script.lastResult = `${instruction} precondition failed`;
   return false;
 }
 
 function advanceAgent(agent: Agent, state: WorldState, rng: Rng): void {
-  if ((state.tick + Number(agent.id.slice(1))) % 18 === 0) {
-    agent.directive = {
-      ...agent.directive,
-      goal: chooseGoal(agent, state, rng),
-      targetMaterial: rng.pick(materials),
-      controllerAction: rng.pick(controllerActions),
-      source: "instinct",
-    };
-  }
   const acted = executeAgentScript(agent, state, rng);
   agent.energy -= acted ? 0.0012 : 0.002;
-  if (agent.energy <= 0.14) {
-    agent.directive = {
-      ...agent.directive,
-      goal: "gather",
-      targetMaterial: "water",
-      source: "instinct",
-    };
-  }
   if (agent.energy <= 0) {
     agent.energy = 0.42;
     agent.inventory = emptyInventory();
-    agent.directive = instinctDirective(rng);
     addEvent(
       state,
       "failure",
@@ -765,7 +772,7 @@ function advanceArtifacts(state: WorldState, rng: Rng): void {
       tile.richness = Math.min(1, tile.richness + strength * 0.5);
     if (artifact.controller.action === "signal" && rng.chance(0.03)) {
       const agent = nearest(artifact, state.agents);
-      if (agent) agent.directive = { ...agent.directive, goal: "inspect", source: "instinct" };
+      if (agent) agent.script.lastResult = `received signal from ${artifact.id}`;
     }
   }
 }
@@ -796,23 +803,6 @@ export function advanceWorld(state: WorldState, steps = 1): WorldState {
     advanceEnvironment(state);
     advanceArtifacts(state, rng);
     for (const agent of state.agents) {
-      if (agent.energy <= 0.14) {
-        agent.directive = {
-          ...agent.directive,
-          goal: "gather",
-          targetMaterial: "water",
-          actionId: "forage",
-          source: "instinct",
-        };
-      }
-      const tile = tileAt(state, agent.x, agent.y);
-      const heard = agent.heardMessages.at(-1);
-      updateAgentScript(
-        agent,
-        state.actionLibrary,
-        state.tick,
-        `${tile.terrain}; energy ${Math.round(agent.energy * 100)}%; ${agent.artifactsTouched} artifact contacts${heard ? `; heard ${heard.fromId}: “${heard.text}”` : ""}`,
-      );
       advanceAgent(agent, state, rng);
     }
     if (state.tick % 4 === 0) {
@@ -833,16 +823,24 @@ export function applyDirective(
   agentId: string,
   directive: AgentDirective,
   extensionFacilitated = false,
+  decisionTick = state.tick,
+  interval = MODEL_MACROTURN_INTERVAL_TICKS,
 ): boolean {
   if (!goals.includes(directive.goal)) return false;
   if (!materials.includes(directive.targetMaterial)) return false;
   if (!controllerActions.includes(directive.controllerAction)) return false;
   const agent = state.agents.find((candidate) => candidate.id === agentId);
   if (!agent) return false;
+  if (agent.nextDecisionTick !== decisionTick) return false;
   let actionId = directive.actionId;
   let proposal: AgentActionDefinition | undefined;
   if (extensionFacilitated && directive.actionProposal) {
-    proposal = registerAction(state.actionLibrary, directive.actionProposal, agent.id, state.tick);
+    proposal = registerAction(
+      state.actionLibrary,
+      directive.actionProposal,
+      agent.id,
+      decisionTick,
+    );
     if (proposal) {
       actionId = proposal.id;
       if (!agent.knownActionIds.includes(proposal.id)) agent.knownActionIds.push(proposal.id);
@@ -852,6 +850,7 @@ export function applyDirective(
         `${agent.name} authored ${proposal.icon} ${proposal.name}: ${proposal.algorithm.slice(0, 70)}`,
         agent.x,
         agent.y,
+        decisionTick,
       );
     }
   }
@@ -876,29 +875,49 @@ export function applyDirective(
     note: directive.note.slice(0, 120),
     speech: directive.speech ? normalizeSpeech(directive.speech) : undefined,
   };
-  agent.lastDecisionTick = state.tick;
-  if (agent.directive.speech) deliverSpeech(state, agent.id, agent.directive.speech);
+  const tile = tileAt(state, agent.x, agent.y);
+  const heard = agent.heardMessages.at(-1);
+  updateAgentScript(
+    agent,
+    state.actionLibrary,
+    decisionTick,
+    `${tile.terrain}; energy ${Math.round(agent.energy * 100)}%; ${agent.artifactsTouched} artifact contacts${heard ? `; heard ${heard.fromId}: “${heard.text}”` : ""}`,
+  );
+  agent.scriptCursor = 0;
+  agent.lastDecisionTick = decisionTick;
+  agent.nextDecisionTick = decisionTick + interval;
+  if (agent.directive.speech) deliverSpeech(state, agent.id, agent.directive.speech, decisionTick);
   addEvent(
     state,
     "decision",
     `${agent.name} chose ${directive.goal}: ${directive.note.slice(0, 58)}`,
     agent.x,
     agent.y,
+    decisionTick,
   );
   return true;
 }
 
-export function chooseDecisionAgents(state: WorldState, count: number): Agent[] {
-  return [...state.agents]
-    .sort(
-      (a, b) =>
-        a.lastDecisionTick - b.lastDecisionTick || b.energy - a.energy || a.id.localeCompare(b.id),
-    )
-    .slice(0, Math.max(1, Math.floor(count)));
-}
-
-export function chooseDecisionAgent(state: WorldState): Agent {
-  return chooseDecisionAgents(state, 1)[0] ?? state.agents[0]!;
+export function recordFailedDecision(
+  state: WorldState,
+  agentId: string,
+  decisionTick: number,
+  reason: string,
+  interval = MODEL_MACROTURN_INTERVAL_TICKS,
+): boolean {
+  const agent = state.agents.find((candidate) => candidate.id === agentId);
+  if (!agent || agent.nextDecisionTick !== decisionTick) return false;
+  agent.lastDecisionTick = decisionTick;
+  agent.nextDecisionTick = decisionTick + interval;
+  addEvent(
+    state,
+    "failure",
+    `${agent.name} kept ${agent.script.actionId}: ${reason.slice(0, 72)}`,
+    agent.x,
+    agent.y,
+    decisionTick,
+  );
+  return true;
 }
 
 export function decisionObservation(state: WorldState, agent: Agent): Record<string, unknown> {

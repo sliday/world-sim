@@ -7,7 +7,8 @@ This is a live implementation track toward the paper's core mechanics, not a rep
 ## What is real in the simulation
 
 - 100 policy-equivalent agents receive local observations; a fresh world initializes them with identical policy and energy.
-- Every agent recompiles and executes one bounded local decision on each one-second world tick; expensive model macroturns are staggered separately.
+- Every agent stays with one cyclic, bounded activity between fixed model macroturns and attempts exactly one primitive on each world tick.
+- Macroturn phases are persistent and staggered: every agent gets one AI reassessment opportunity per 60 authoritative ticks, with at most two agents due on any tick.
 - A toroidal 96×72 planet has finite resources, facilities, moisture, contamination, and persistent artifacts.
 - Agents can explore, gather, construct, inspect, maintain, and fork constrained artifact controllers.
 - The deterministic consequence layer—not an LLM—validates resources, actions, health, performance, and failure.
@@ -27,6 +28,12 @@ This is a live implementation track toward the paper's core mechanics, not a rep
 
 The full native NullClaw daemon does not run inside a Cloudflare Worker. This project uses NullClaw's official edge pattern: networking, secrets, validation, and consequences stay in the Worker host; a tiny Zig/WASM core selects the context policy used for occasional model decisions.
 
+## Decision mechanics
+
+The scheduler follows SwarmWorld's fixed per-agent macroturn phases rather than selecting whichever agents look stale. The paper's primary population study used a 50-tick interval; this observatory deliberately uses 60 ticks so one authoritative tick approximates one second and every agent gets one AI opportunity per minute. A macroturn is resolved before its candidate world tick, and retryable provider failures preserve the activity and scheduled tick instead of silently skipping an agent.
+
+There is one explicit product-driven variation from Algorithm 1: SwarmWorld consumes a finite action queue and waits when it empties, while this world cycles a bounded activity program until the next macroturn. That variation implements the requirement that a bot remain engaged between reassessments. The consequence boundary remains the same: the model chooses a validated activity, and the deterministic simulator attempts exactly one primitive per agent per tick.
+
 ## Local development
 
 ```bash
@@ -37,7 +44,7 @@ npm run dev:edge
 
 Open <http://localhost:8787>.
 
-The world runs deterministically without credentials. To test model-assisted decisions, set `OPENROUTER_API_KEY` as a Wrangler secret and set `LLM_ENABLED` to `true`. Model calls are capped by `MAX_LLM_CALLS_PER_DAY` and spaced by `LLM_INTERVAL_TICKS`.
+The browser fallback runs deterministically without credentials. The authoritative Worker requires `OPENROUTER_API_KEY` at each scheduled macroturn and preserves the current activity if a decision is invalid. Retryable provider failures preserve the scheduled opportunity and pause world time rather than skipping an agent. Model calls remain capped by `MAX_LLM_CALLS_PER_DAY`.
 
 ## Verification
 
