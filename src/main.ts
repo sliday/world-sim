@@ -162,6 +162,8 @@ function eventMarkup(event: WorldEvent, newest: boolean): string {
     repair: "hn-spinner",
     failure: "hn-times-circle",
     decision: "hn-sparkles",
+    craft: "hn-code-block",
+    creative: "hn-sparkles",
   };
   return `<div class="event ${newest ? "newest" : ""}"><i class="hn ${icon[event.kind]}"></i><p>${escapeHtml(event.text)}<span>T${event.tick}</span></p></div>`;
 }
@@ -189,7 +191,8 @@ function inventoryMarkup(agent: Agent): string {
   return Object.entries(agent.inventory)
     .map(([material, amount]) => {
       const visual = materialVisual[material as MaterialKind];
-      return `<div><span><i class="hn ${visual.icon}"></i><b>${visual.rune}</b>${escapeHtml(material.toUpperCase())}</span><strong>${Math.round(amount * 10) / 10}</strong></div>`;
+      const purpose = agent.materialPurposes?.[material as MaterialKind];
+      return `<div class="${purpose ? "reserved" : ""}"><span><i class="hn ${visual.icon}"></i><b>${visual.rune}</b>${escapeHtml(material.toUpperCase())}${purpose ? "<em>RESERVED</em>" : ""}</span><strong>${Math.round(amount * 10) / 10}</strong></div>`;
     })
     .join("");
 }
@@ -237,6 +240,7 @@ function renderAgentInspector(snapshot: PublicWorldSnapshot): void {
     return;
   }
   const energy = Math.round(agent.energy * 100);
+  const curiosity = Math.round((agent.curiosity ?? 0) * 100);
   const action = snapshot.actionLibrary.find((candidate) => candidate.id === agent.script.actionId);
   const heard = agent.heardMessages
     .slice(-3)
@@ -253,6 +257,18 @@ function renderAgentInspector(snapshot: PublicWorldSnapshot): void {
   agentInspectorContent.innerHTML = `
     <div class="agent-state"><span class="agent-mode">${escapeHtml(agent.mode.toUpperCase())}</span><span>${energy}% ENERGY</span></div>
     <div class="energy-track" aria-label="Energy ${energy} percent"><i style="width:${energy}%"></i></div>
+    <div class="agent-state curiosity-state"><span>CURIOSITY</span><span>${curiosity}%${agent.craftingTarget ? " · UNSATISFIED" : ""}</span></div>
+    <div class="energy-track curiosity-track" aria-label="Curiosity ${curiosity} percent"><i style="width:${curiosity}%"></i></div>
+    ${
+      agent.craftingTarget
+        ? `<div class="agent-directive crafting-commitment">
+      <span>${agent.craftingTarget.mode === "creative" ? "CREATIVE SESSION" : "CRAFTING COMMITMENT"} · SINCE T${agent.craftingTarget.startedTick}</span>
+      <strong>${escapeHtml(agent.craftingTarget.ingredients.join(" + ").toUpperCase())} → ${escapeHtml(agent.craftingTarget.actionName.toUpperCase())}</strong>
+      <p>${escapeHtml(agent.craftingTarget.purpose)}</p>
+      <small>RESERVED MATERIALS STAY PURPOSE-BOUND UNTIL BUILT</small>
+    </div>`
+        : ""
+    }
     <div class="agent-directive">
       <span>${agent.directive.source === "openrouter" ? "OPENROUTER DIRECTIVE" : "LOCAL DIRECTIVE"}</span>
       <strong>${escapeHtml(agent.directive.goal.toUpperCase())} · ${escapeHtml(agent.directive.targetMaterial.toUpperCase())}</strong>
@@ -274,6 +290,7 @@ function renderAgentInspector(snapshot: PublicWorldSnapshot): void {
     ${longMemoryMarkup(agent.id)}
     <div class="agent-stat-grid">
       <div><span>BUILDS</span><strong>${agent.builds}</strong></div>
+      <div><span>CRAFTS</span><strong>${agent.crafts ?? 0}</strong></div>
       <div><span>DISCOVERIES</span><strong>${agent.discoveries}</strong></div>
       <div><span>ARTIFACT CONTACTS</span><strong>${agent.artifactsTouched}</strong></div>
       <div><span>LAST DECISION</span><strong>T${agent.lastDecisionTick}</strong></div>

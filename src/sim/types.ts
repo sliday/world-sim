@@ -14,9 +14,23 @@ export const terrainKinds = [
 
 export type TerrainKind = (typeof terrainKinds)[number];
 export type MaterialKind = "water" | "fungus" | "mineral" | "cellulose" | "chitin";
-export type AgentMode = "surveying" | "harvesting" | "fabricating" | "maintaining" | "forking";
+export type AgentMode =
+  | "surveying"
+  | "harvesting"
+  | "fabricating"
+  | "maintaining"
+  | "forking"
+  | "crafting"
+  | "creating";
 export type ControllerAction = "collect-water" | "remediate" | "heal" | "grow" | "signal";
-export type AgentGoal = "explore" | "gather" | "build" | "inspect" | "maintain";
+export type AgentGoal =
+  | "explore"
+  | "gather"
+  | "build"
+  | "inspect"
+  | "maintain"
+  | "craft"
+  | "create";
 export type ActionPrimitive =
   | "scan-local"
   | "roam"
@@ -26,7 +40,10 @@ export type ActionPrimitive =
   | "seek-station"
   | "inspect-local"
   | "repair-local"
-  | "seek-artifact";
+  | "seek-artifact"
+  | "craft-local"
+  | "mix-local"
+  | "seek-crafting-material";
 
 export interface Vec2 {
   x: number;
@@ -65,6 +82,8 @@ export interface AgentDirective {
   actionId?: string;
   icon?: string;
   actionProposal?: AgentActionProposal;
+  craftActionId?: string;
+  creativeSession?: CreativeSessionProposal;
   speech?: string;
 }
 
@@ -86,11 +105,27 @@ export interface AgentActionProposal {
   program: ActionPrimitive[];
 }
 
+export interface CreativeSessionProposal extends AgentActionProposal {
+  ingredients: [MaterialKind, MaterialKind];
+  purpose: string;
+}
+
 export interface AgentActionDefinition extends AgentActionProposal {
   id: string;
   authorId: string;
   createdTick: number;
   uses: number;
+  recipe?: [MaterialKind, MaterialKind];
+}
+
+export interface CraftingTarget {
+  mode: "craft" | "creative";
+  actionId?: string;
+  actionName: string;
+  ingredients: [MaterialKind, MaterialKind];
+  purpose: string;
+  proposal?: AgentActionProposal;
+  startedTick: number;
 }
 
 export interface AgentDocuments {
@@ -128,6 +163,11 @@ export interface Agent {
   discoveries: number;
   artifactsTouched: number;
   builds: number;
+  crafts: number;
+  curiosity: number;
+  lastCreativeTick: number;
+  craftingTarget?: CraftingTarget;
+  materialPurposes: Partial<Record<MaterialKind, string>>;
   forkedProgramId?: string;
   directive: AgentDirective;
   lastDecisionTick: number;
@@ -175,7 +215,7 @@ export interface Station {
 export interface WorldEvent {
   id: string;
   tick: number;
-  kind: "discovery" | "build" | "fork" | "repair" | "failure" | "decision";
+  kind: "discovery" | "build" | "fork" | "repair" | "failure" | "decision" | "craft" | "creative";
   text: string;
   x: number;
   y: number;
@@ -210,7 +250,7 @@ export interface WorldMetrics {
 }
 
 export interface WorldState {
-  version: 3;
+  version: 4;
   seed: number;
   rngState: number;
   tick: number;

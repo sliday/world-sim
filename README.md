@@ -11,7 +11,10 @@ This is a live implementation track toward the paper's core mechanics, not a rep
 - Macroturn phases are persistent and staggered: every agent gets one AI reassessment opportunity per 60 authoritative ticks, with at most two agents due on any tick.
 - Every 3,600 authoritative ticks, an observer model turns the persisted event trace into a factual 1–5 line world diary focused on new actions, mapped resources, inheritance, adoption, and meaningful change.
 - A toroidal 96×72 planet has finite resources, facilities, moisture, contamination, and persistent artifacts.
-- Agents can explore, gather, construct, inspect, maintain, and fork constrained artifact controllers.
+- Agents can explore, gather, construct, inspect, maintain, craft learned skills, and fork constrained artifact controllers.
+- Curiosity accumulates like hunger. Eligible bots periodically enter an AI Creative Session that proposes a two-material mix and a bounded action program; the action exists only after deterministic gathering, consumption, validation, and construction succeed.
+- Missing recipe materials become explicit seek-and-gather subgoals. Inventory carries a durable purpose label so agent memory records why each ingredient is reserved until the craft completes or the experiment fails.
+- Carried water is a finite energy reserve, not an endlessly rewarding gathering tile. Bots sip it when energy is low, retain physical inventory through a reboot, and leave saturated water gathering for agent-staggered material deficits.
 - The deterministic consequence layer—not an LLM—validates resources, actions, health, performance, and failure.
 - Artifacts remain in the world, can be physically encountered by later agents, and retain executable lineage.
 - Bounded movement trails expose mean path length, regions visited, artifact-contact rate, and spatial entropy without allowing history to grow unbounded.
@@ -37,6 +40,8 @@ The scheduler follows SwarmWorld's fixed per-agent macroturn phases rather than 
 There is one explicit product-driven variation from Algorithm 1: SwarmWorld consumes a finite action queue and waits when it empties, while this world cycles a bounded activity program until the next macroturn. That variation implements the requirement that a bot remain engaged between reassessments. The consequence boundary remains the same: the model chooses a validated activity, and the deterministic simulator attempts exactly one primitive per agent per tick.
 
 The hourly world diary is an observer layer over Algorithm 1's `AppendTrace`, not agent memory or an authoritative consequence. Raw notable events are persisted between diary checkpoints; the model may organize only supplied evidence, and diary failure never blocks world time. Tracking begins at migration, so the first entry does not fabricate earlier history.
+
+Crafting borrows Infinite Craft's legible pairwise-combination loop, but not its unconstrained ontology. A Creative Session may propose a material pair and a reusable program only from the typed action DSL. The host records that proposal as a physical commitment, seeks missing ingredients, and registers the skill only after both ingredients are consumed. Duplicate or invalid mixes consume the attempt without satisfying curiosity. Successful recipes become craftable knowledge that another agent can reproduce from the same materials. This preserves SwarmWorld's separation of cognition, transactional validation, deterministic execution, memory, and trace append.
 
 ## Local development
 

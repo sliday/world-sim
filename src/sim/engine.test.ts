@@ -167,10 +167,13 @@ describe("deterministic consequence layer", () => {
     expect(trajectory.observedTicks).toBe(0);
   });
 
-  it("maintains per-agent operating files and executes facilitated bounded actions", () => {
+  it("turns a facilitated creative session into a physical, shareable crafted action", () => {
     const world = createInitialWorld(260826081, 0);
     const agent = world.agents[0]!;
     const decisionTick = agent.nextDecisionTick;
+    agent.curiosity = 1;
+    agent.inventory.fungus = 2;
+    agent.inventory.mineral = 2;
     expect(agent.documents.soulMd).toContain("# SOUL.md");
     expect(agent.documents.memoryMd).toContain("# MEMORY.md");
     expect(agent.documents.userMd).toContain("# USER.md");
@@ -180,35 +183,202 @@ describe("deterministic consequence layer", () => {
         world,
         agent.id,
         {
-          goal: "gather",
+          goal: "create",
           targetMaterial: "fungus",
           controllerAction: "grow",
-          note: "sample nearby matter before moving",
+          note: "mix local matter into a reusable sampling skill",
           source: "openrouter",
-          actionId: "forage",
+          actionId: "creative-session",
           icon: "✦",
-          actionProposal: {
+          creativeSession: {
             name: "Sample Arc",
             icon: "✦",
             algorithm:
               "Sample matter underfoot, then follow the nearest requested resource gradient.",
             program: ["scan-local", "gather-local", "seek-resource"],
+            ingredients: ["fungus", "mineral"],
+            purpose: "build a reusable material sampling behavior",
           },
         },
         true,
         decisionTick,
       ),
     ).toBe(true);
-    expect(world.actionLibrary).toHaveLength(before + 1);
-    expect(agent.knownActionIds).toContain(agent.directive.actionId);
+    expect(world.actionLibrary).toHaveLength(before);
+    expect(agent.craftingTarget?.actionName).toBe("Sample Arc");
+    expect(agent.materialPurposes.fungus).toContain("sampling");
     expect(agent.script.updatedTick).toBe(decisionTick);
     expect(agent.script.revision).toBe(1);
     expect(agent.script.icon).toBe("✦");
     expect(agent.scriptCursor).toBe(0);
     expect(agent.nextDecisionTick).toBe(decisionTick + MODEL_MACROTURN_INTERVAL_TICKS);
-    expect(agent.documents.memoryMd).toContain(`T${decisionTick}:`);
+    expect(agent.documents.memoryMd).toContain("Reserved materials");
+
+    advanceWorld(world, 1);
+    expect(world.actionLibrary).toHaveLength(before + 1);
+    const crafted = world.actionLibrary.at(-1)!;
+    expect(crafted.recipe).toEqual(["fungus", "mineral"]);
+    expect(agent.knownActionIds).toContain(crafted.id);
+    expect(agent.craftingTarget).toBeUndefined();
+    expect(agent.inventory.fungus).toBe(0);
+    expect(agent.inventory.mineral).toBe(0);
+    expect(agent.curiosity).toBe(0);
+    expect(agent.documents.memoryMd).toContain("The materials were stored to");
+
+    const learner = world.agents[1]!;
+    learner.inventory.fungus = 2;
+    learner.inventory.mineral = 2;
+    expect(
+      applyDirective(
+        world,
+        learner.id,
+        {
+          goal: "craft",
+          targetMaterial: "fungus",
+          controllerAction: "grow",
+          note: "reproduce the observed sampling skill",
+          source: "openrouter",
+          actionId: "craft",
+          craftActionId: crafted.id,
+        },
+        false,
+        learner.nextDecisionTick,
+      ),
+    ).toBe(true);
+    advanceWorld(world, 1);
+    expect(learner.knownActionIds).toContain(crafted.id);
+    expect(learner.crafts).toBe(1);
     const forage = world.actionLibrary.find((action) => action.id === "forage")!;
     expect(registerAction(world.actionLibrary, forage, agent.id, world.tick)).toBeUndefined();
+  });
+
+  it("keeps curiosity unsatisfied and seeks purpose-bound missing ingredients", () => {
+    const world = createInitialWorld(260826081, 0);
+    const agent = world.agents[0]!;
+    agent.curiosity = 1;
+    const before = world.actionLibrary.length;
+    expect(
+      applyDirective(
+        world,
+        agent.id,
+        {
+          goal: "create",
+          targetMaterial: "chitin",
+          controllerAction: "signal",
+          note: "test a new signaling mixture",
+          source: "openrouter",
+          actionId: "creative-session",
+          icon: "⟡",
+          creativeSession: {
+            name: "Chitin Beacon",
+            icon: "⟡",
+            algorithm: "Inspect local matter, then signal while seeking useful artifacts.",
+            program: ["inspect-local", "seek-artifact", "roam"],
+            ingredients: ["chitin", "cellulose"],
+            purpose: "build a reusable environmental beacon",
+          },
+        },
+        true,
+        agent.nextDecisionTick,
+      ),
+    ).toBe(true);
+    const position = { x: agent.x, y: agent.y };
+    advanceWorld(world, 2);
+    expect(world.actionLibrary).toHaveLength(before);
+    expect(agent.craftingTarget?.actionName).toBe("Chitin Beacon");
+    expect(agent.materialPurposes.chitin).toContain("beacon");
+    expect(agent.materialPurposes.cellulose).toContain("beacon");
+    expect(agent.curiosity).toBeGreaterThan(0.99);
+    expect(agent.script.lastResult).toContain("seeking chitin");
+    expect({ x: agent.x, y: agent.y }).not.toEqual(position);
+  });
+
+  it("does not satisfy curiosity when a material mix reproduces existing behavior", () => {
+    const world = createInitialWorld(260826081, 0);
+    const agent = world.agents[0]!;
+    agent.curiosity = 1;
+    agent.inventory.water = 2;
+    agent.inventory.fungus = 2;
+    const before = world.actionLibrary.length;
+    expect(
+      applyDirective(
+        world,
+        agent.id,
+        {
+          goal: "create",
+          targetMaterial: "water",
+          controllerAction: "collect-water",
+          note: "test whether wet fungus improves surveying",
+          source: "openrouter",
+          actionId: "creative-session",
+          icon: "◎",
+          creativeSession: {
+            name: "Wet Survey",
+            icon: "◎",
+            algorithm: "Scan the local tile, then roam toward an adjacent observation point.",
+            program: ["scan-local", "roam"],
+            ingredients: ["water", "fungus"],
+            purpose: "build a moisture-aware survey behavior",
+          },
+        },
+        true,
+        agent.nextDecisionTick,
+      ),
+    ).toBe(true);
+    advanceWorld(world, 1);
+    expect(world.actionLibrary).toHaveLength(before);
+    expect(agent.craftingTarget).toBeUndefined();
+    expect(agent.inventory.water).toBe(0);
+    expect(agent.inventory.fungus).toBe(0);
+    expect(agent.curiosity).toBeGreaterThan(0.99);
+    expect(agent.documents.memoryMd).toContain("no novel behavior was built");
+  });
+
+  it("uses carried water for energy without erasing gathered materials", () => {
+    const world = createInitialWorld(260826081, 0);
+    const agent = world.agents[0]!;
+    agent.energy = 0.03;
+    agent.inventory.water = 2;
+    agent.inventory.mineral = 4;
+    const rebootsBefore = world.events.filter((event) =>
+      event.text.includes(`${agent.name} rebooted`),
+    ).length;
+
+    advanceWorld(world, 60);
+
+    expect(agent.energy).toBeGreaterThan(0.03);
+    expect(agent.inventory.water).toBeLessThan(2);
+    expect(agent.inventory.mineral).toBe(4);
+    expect(
+      world.events.filter((event) => event.text.includes(`${agent.name} rebooted`)).length,
+    ).toBe(rebootsBefore);
+  });
+
+  it("redirects saturated water gathering toward diverse material deficits", () => {
+    const world = createInitialWorld(260826081, 0);
+    const recoveringAgents = world.agents.slice(0, 20);
+    for (const agent of recoveringAgents) {
+      agent.inventory.water = 6;
+      agent.directive = {
+        ...agent.directive,
+        goal: "gather",
+        targetMaterial: "water",
+        actionId: "forage",
+      };
+      agent.script = {
+        ...agent.script,
+        actionId: "forage",
+        program: ["gather-local", "seek-resource"],
+      };
+      agent.scriptCursor = 1;
+    }
+
+    advanceWorld(world, 1);
+    const targets = new Set(recoveringAgents.map((agent) => agent.directive.targetMaterial));
+    expect(recoveringAgents.every((agent) => agent.directive.targetMaterial !== "water")).toBe(
+      true,
+    );
+    expect(targets.size).toBeGreaterThan(1);
   });
 
   it("gives agents stable hash-derived names from a broad universal catalog", () => {
@@ -404,20 +574,35 @@ describe("deterministic consequence layer", () => {
         decisionPhase?: number;
         nextDecisionTick?: number;
         scriptCursor?: number;
+        crafts?: number;
+        curiosity?: number;
+        lastCreativeTick?: number;
+        materialPurposes?: Record<string, string>;
       }>;
     };
     legacy.version = 2;
     delete legacy.agents[37]!.decisionPhase;
     delete legacy.agents[37]!.nextDecisionTick;
     delete legacy.agents[37]!.scriptCursor;
+    delete legacy.agents[37]!.crafts;
+    delete legacy.agents[37]!.curiosity;
+    delete legacy.agents[37]!.lastCreativeTick;
+    delete legacy.agents[37]!.materialPurposes;
 
     ensureAgentOperatingSystem(world);
-    expect(world.version).toBe(3);
+    expect(world.version).toBe(4);
     expect(agent.directive).toEqual(directive);
     expect(agent.script).toEqual(script);
     expect(agent.decisionPhase).toBe(decisionPhaseForAgent(agent.id));
     expect(agent.nextDecisionTick).toBe(nextScheduledDecisionTick(world.tick, agent.decisionPhase));
     expect(agent.scriptCursor).toBe(0);
+    expect(agent.crafts).toBe(0);
+    expect(agent.curiosity).toBeGreaterThanOrEqual(0);
+    expect(agent.lastCreativeTick).toBe(world.tick - 600);
+    expect(agent.materialPurposes).toEqual({});
+    expect(world.actionLibrary.map((action) => action.id)).toEqual(
+      expect.arrayContaining(["craft", "creative-session"]),
+    );
   });
 
   it("compacts durable episodic memory under a hard token budget", () => {

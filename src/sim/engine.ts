@@ -9,18 +9,19 @@ import {
   initialScript,
   registerAction,
   updateAgentScript,
+  validateActionProposal,
 } from "./action-sandbox";
 import {
   AGENT_COUNT,
   WORLD_HEIGHT,
   WORLD_WIDTH,
   type Agent,
-  type AgentActionDefinition,
   type AgentDirective,
   type AgentGoal,
   type Artifact,
   type Controller,
   type ControllerAction,
+  type CraftingTarget,
   type Inventory,
   type MaterialKind,
   type PublicWorldSnapshot,
@@ -40,9 +41,23 @@ const controllerActions: readonly ControllerAction[] = [
   "grow",
   "signal",
 ];
-const goals: readonly AgentGoal[] = ["explore", "gather", "build", "inspect", "maintain"];
+const goals: readonly AgentGoal[] = [
+  "explore",
+  "gather",
+  "build",
+  "inspect",
+  "maintain",
+  "craft",
+  "create",
+];
 export const ARTIFACT_CONTACT_RADIUS = 3;
 export const MODEL_MACROTURN_INTERVAL_TICKS = 60;
+export const CREATIVE_SESSION_COOLDOWN_TICKS = 600;
+export const CREATIVE_CURIOSITY_THRESHOLD = 0.68;
+const CURIOSITY_PER_TICK = 1 / 3_600;
+const CRAFT_INGREDIENT_COST = 2;
+const CARRIED_WATER_SIP = 0.02;
+const CARRIED_WATER_ENERGY = 0.32;
 const emptyInventory = (): Inventory => ({
   water: 0,
   fungus: 0,
@@ -199,6 +214,10 @@ function createAgent(terrain: Tile[], rng: Rng, seed: number, index: number): Ag
     discoveries: 0,
     artifactsTouched: 0,
     builds: 0,
+    crafts: 0,
+    curiosity: (index % 17) / 28,
+    lastCreativeTick: -CREATIVE_SESSION_COOLDOWN_TICKS,
+    materialPurposes: {},
     directive: initialDirective(),
     lastDecisionTick: 0,
     decisionPhase: decisionPhaseForAgent(id),
@@ -229,7 +248,7 @@ export function createInitialWorld(seed = 260826081, now = Date.now()): WorldSta
   const rng = new Rng(seed);
   const terrain = createTerrain(seed);
   const state: WorldState = {
-    version: 3,
+    version: 4,
     seed,
     rngState: rng.snapshot,
     tick: 0,
@@ -258,8 +277,12 @@ export function createInitialWorld(seed = 260826081, now = Date.now()): WorldSta
 }
 
 export function ensureAgentOperatingSystem(state: WorldState): WorldState {
-  state.version = 3;
+  state.version = 4;
   state.actionLibrary ??= baseActionLibrary();
+  for (const baseAction of baseActionLibrary()) {
+    if (!state.actionLibrary.some((action) => action.id === baseAction.id))
+      state.actionLibrary.push(baseAction);
+  }
   state.messages ??= [];
   for (const artifact of state.artifacts) {
     artifact.creatorId ??=
@@ -307,6 +330,12 @@ export function ensureAgentOperatingSystem(state: WorldState): WorldState {
         ? agent.nextDecisionTick
         : nextScheduledDecisionTick(state.tick, agent.decisionPhase);
     agent.scriptCursor = Number.isInteger(agent.scriptCursor) ? Math.max(0, agent.scriptCursor) : 0;
+    agent.crafts ??= 0;
+    agent.curiosity = Number.isFinite(agent.curiosity)
+      ? Math.max(0, Math.min(1, agent.curiosity))
+      : ((Number(agent.id.slice(1)) - 1) % 17) / 28;
+    agent.lastCreativeTick ??= state.tick - CREATIVE_SESSION_COOLDOWN_TICKS;
+    agent.materialPurposes ??= {};
     agent.knownActionIds ??= [...baseIds];
     agent.heardMessages ??= [];
     agent.directive.actionId =
@@ -503,15 +532,154 @@ function gather(agent: Agent, state: WorldState, rng: Rng): boolean {
   const tile = tileAt(state, agent.x, agent.y);
   const material = materialForTerrain[tile.terrain];
   if (!material || tile.richness < 0.08) return false;
+  if (!agent.materialPurposes[material] && materialStockSatisfied(agent, material)) return false;
   const amount = Math.min(tile.richness, 0.45 + rng.next() * 0.45);
   agent.inventory[material] += amount;
   tile.richness = Math.max(0.02, tile.richness - amount * 0.035);
-  agent.energy = Math.min(1, agent.energy + (material === "water" ? 0.055 : 0.018));
   agent.mode = "harvesting";
+  if (agent.craftingTarget?.ingredients.includes(material)) {
+    agent.materialPurposes[material] = agent.craftingTarget.purpose;
+  }
   if (rng.chance(0.035)) {
     agent.discoveries += 1;
     addEvent(state, "discovery", `${agent.name} mapped a rich ${material} seam`, agent.x, agent.y);
   }
+  return true;
+}
+
+function materialStockTarget(agent: Agent, material: MaterialKind): number {
+  if (material === "water") return agent.energy < 0.55 ? 4 : 3;
+  return 6;
+}
+
+function materialStockSatisfied(agent: Agent, material: MaterialKind): boolean {
+  return agent.inventory[material] >= materialStockTarget(agent, material);
+}
+
+function mostNeededMaterial(agent: Agent): MaterialKind {
+  const ordinal = Number(agent.id.slice(1));
+  const offset = Number.isInteger(ordinal) && ordinal > 0 ? (ordinal - 1) % materials.length : 0;
+  const rotated = [...materials.slice(offset), ...materials.slice(0, offset)];
+  return rotated.reduce((needed, material) => {
+    const pressure = agent.inventory[material] / materialStockTarget(agent, material);
+    const neededPressure = agent.inventory[needed] / materialStockTarget(agent, needed);
+    return pressure < neededPressure ? material : needed;
+  });
+}
+
+function sustainFromCarriedWater(agent: Agent): void {
+  if (agent.energy >= 0.72 || agent.inventory.water <= 0) return;
+  const sip = Math.min(CARRIED_WATER_SIP, agent.inventory.water);
+  agent.inventory.water -= sip;
+  agent.energy = Math.min(1, agent.energy + sip * CARRIED_WATER_ENERGY);
+}
+
+function craftingRequirement(
+  ingredients: [MaterialKind, MaterialKind],
+  material: MaterialKind,
+): number {
+  return ingredients.filter((ingredient) => ingredient === material).length * CRAFT_INGREDIENT_COST;
+}
+
+export function missingCraftingMaterial(agent: Agent): MaterialKind | undefined {
+  const target = agent.craftingTarget;
+  if (!target) return undefined;
+  return [...new Set(target.ingredients)].find(
+    (material) => agent.inventory[material] < craftingRequirement(target.ingredients, material),
+  );
+}
+
+function clearCraftingPurpose(agent: Agent, target: CraftingTarget): void {
+  for (const material of new Set(target.ingredients)) delete agent.materialPurposes[material];
+}
+
+function consumeCraftingMaterials(agent: Agent, target: CraftingTarget): void {
+  for (const material of materials) {
+    agent.inventory[material] -= craftingRequirement(target.ingredients, material);
+  }
+}
+
+export function completeCrafting(agent: Agent, state: WorldState): boolean {
+  const target = agent.craftingTarget;
+  if (!target || missingCraftingMaterial(agent)) return false;
+
+  if (target.mode === "creative") {
+    const proposal = target.proposal;
+    const action = proposal
+      ? registerAction(state.actionLibrary, proposal, agent.id, state.tick, target.ingredients)
+      : undefined;
+    consumeCraftingMaterials(agent, target);
+    clearCraftingPurpose(agent, target);
+    agent.craftingTarget = undefined;
+    agent.lastCreativeTick = state.tick;
+    if (!action) {
+      agent.script.lastResult = "mix reproduced an existing behavior";
+      agent.documents.memoryMd =
+        `# MEMORY.md\nT${state.tick}: Tested ${target.ingredients.join(" + ")} for ${target.actionName}. ` +
+        "The materials were consumed, but no novel behavior was built; curiosity remains.";
+      addEvent(
+        state,
+        "creative",
+        `${agent.name} tested ${target.ingredients.join(" + ")} · no novel behavior`,
+        agent.x,
+        agent.y,
+      );
+      return true;
+    }
+    if (!agent.knownActionIds.includes(action.id)) agent.knownActionIds.push(action.id);
+    agent.directive.actionId = action.id;
+    agent.discoveries += 1;
+    agent.crafts += 1;
+    agent.curiosity = 0;
+    agent.mode = "creating";
+    agent.documents.memoryMd =
+      `# MEMORY.md\nT${state.tick}: Built ${action.name} from ${target.ingredients.join(" + ")}. ` +
+      `The materials were stored to ${target.purpose}.`;
+    addEvent(
+      state,
+      "creative",
+      `${agent.name} mixed ${target.ingredients.join(" + ")} → ${action.icon} ${action.name}`,
+      agent.x,
+      agent.y,
+    );
+    return true;
+  }
+
+  const action = state.actionLibrary.find(
+    (candidate) => candidate.id === target.actionId && candidate.recipe,
+  );
+  if (!action) {
+    clearCraftingPurpose(agent, target);
+    agent.craftingTarget = undefined;
+    agent.documents.memoryMd =
+      `# MEMORY.md\nT${state.tick}: Could not craft ${target.actionName}; its shared recipe was no longer available. ` +
+      "Reserved materials were released and curiosity remains.";
+    addEvent(
+      state,
+      "failure",
+      `${agent.name} released an unavailable recipe for ${target.actionName}`,
+      agent.x,
+      agent.y,
+    );
+    return true;
+  }
+  consumeCraftingMaterials(agent, target);
+  clearCraftingPurpose(agent, target);
+  agent.craftingTarget = undefined;
+  if (!agent.knownActionIds.includes(action.id)) agent.knownActionIds.push(action.id);
+  agent.crafts += 1;
+  agent.curiosity = 0;
+  agent.mode = "crafting";
+  agent.documents.memoryMd =
+    `# MEMORY.md\nT${state.tick}: Crafted ${action.name} from ${target.ingredients.join(" + ")}. ` +
+    `The materials were stored to ${target.purpose}.`;
+  addEvent(
+    state,
+    "craft",
+    `${agent.name} crafted ${action.icon} ${action.name} from ${target.ingredients.join(" + ")}`,
+    agent.x,
+    agent.y,
+  );
   return true;
 }
 
@@ -700,10 +868,36 @@ function executeAgentScript(agent: Agent, state: WorldState, rng: Rng): boolean 
       agent.script.lastResult = "maintained an artifact";
       return true;
     }
+  } else if (instruction === "craft-local" || instruction === "mix-local") {
+    const expectedMode = instruction === "mix-local" ? "creative" : "craft";
+    const craftsBefore = agent.crafts;
+    if (agent.craftingTarget?.mode === expectedMode && completeCrafting(agent, state)) {
+      agent.script.lastResult =
+        agent.crafts > craftsBefore
+          ? expectedMode === "creative"
+            ? "built a novel action"
+            : "crafted a known action"
+          : "tested a material mix without novelty";
+      return true;
+    }
+  } else if (instruction === "seek-crafting-material") {
+    const material = missingCraftingMaterial(agent);
+    if (material) {
+      agent.directive.targetMaterial = material;
+      stepToward(agent, resourcePosition(state, material, agent), rng);
+      agent.mode = agent.craftingTarget?.mode === "creative" ? "creating" : "crafting";
+      agent.script.lastResult = `seeking ${material} for ${agent.craftingTarget?.actionName ?? "craft"}`;
+      return true;
+    }
   } else if (instruction === "seek-resource") {
-    stepToward(agent, resourcePosition(state, agent.directive.targetMaterial, agent), rng);
+    let material = agent.directive.targetMaterial;
+    if (!agent.materialPurposes[material] && materialStockSatisfied(agent, material)) {
+      material = mostNeededMaterial(agent);
+      agent.directive.targetMaterial = material;
+    }
+    stepToward(agent, resourcePosition(state, material, agent), rng);
     agent.mode = "surveying";
-    agent.script.lastResult = `seeking ${agent.directive.targetMaterial}`;
+    agent.script.lastResult = `seeking ${material}`;
     return true;
   } else if (instruction === "seek-station") {
     const station = nearest(agent, state.stations);
@@ -732,11 +926,12 @@ function executeAgentScript(agent: Agent, state: WorldState, rng: Rng): boolean 
 }
 
 function advanceAgent(agent: Agent, state: WorldState, rng: Rng): void {
+  agent.curiosity = Math.min(1, agent.curiosity + CURIOSITY_PER_TICK);
+  sustainFromCarriedWater(agent);
   const acted = executeAgentScript(agent, state, rng);
   agent.energy -= acted ? 0.0012 : 0.002;
   if (agent.energy <= 0) {
     agent.energy = 0.42;
-    agent.inventory = emptyInventory();
     addEvent(
       state,
       "failure",
@@ -832,29 +1027,78 @@ export function applyDirective(
   const agent = state.agents.find((candidate) => candidate.id === agentId);
   if (!agent) return false;
   if (agent.nextDecisionTick !== decisionTick) return false;
-  let actionId = directive.actionId;
-  let proposal: AgentActionDefinition | undefined;
-  if (extensionFacilitated && directive.actionProposal) {
-    proposal = registerAction(
-      state.actionLibrary,
-      directive.actionProposal,
-      agent.id,
-      decisionTick,
-    );
-    if (proposal) {
-      actionId = proposal.id;
-      if (!agent.knownActionIds.includes(proposal.id)) agent.knownActionIds.push(proposal.id);
+  if (!agent.craftingTarget && directive.goal === "create") {
+    const session = directive.creativeSession;
+    const eligible =
+      agent.curiosity >= CREATIVE_CURIOSITY_THRESHOLD &&
+      decisionTick - agent.lastCreativeTick >= CREATIVE_SESSION_COOLDOWN_TICKS;
+    if (
+      extensionFacilitated &&
+      eligible &&
+      session &&
+      validateActionProposal(session) &&
+      session.ingredients.length === 2 &&
+      session.ingredients.every((material) => materials.includes(material)) &&
+      session.purpose.trim().length >= 8
+    ) {
+      agent.craftingTarget = {
+        mode: "creative",
+        actionName: session.name.trim(),
+        ingredients: [...session.ingredients],
+        purpose: session.purpose.trim().slice(0, 120),
+        proposal: {
+          name: session.name,
+          icon: session.icon,
+          algorithm: session.algorithm,
+          program: [...session.program],
+        },
+        startedTick: decisionTick,
+      };
+      agent.lastCreativeTick = decisionTick;
       addEvent(
         state,
-        "discovery",
-        `${agent.name} authored ${proposal.icon} ${proposal.name}: ${proposal.algorithm.slice(0, 70)}`,
+        "creative",
+        `${agent.name} began a creative session: ${session.ingredients.join(" + ")} for ${session.name}`,
         agent.x,
         agent.y,
         decisionTick,
       );
     }
   }
-  if (!agent.knownActionIds.includes(actionId ?? "")) actionId = actionIdForGoal(directive.goal);
+  if (!agent.craftingTarget && directive.goal === "craft" && directive.craftActionId) {
+    const action = state.actionLibrary.find(
+      (candidate) =>
+        candidate.id === directive.craftActionId &&
+        candidate.recipe &&
+        !agent.knownActionIds.includes(candidate.id),
+    );
+    if (action?.recipe) {
+      agent.craftingTarget = {
+        mode: "craft",
+        actionId: action.id,
+        actionName: action.name,
+        ingredients: [...action.recipe],
+        purpose: `learn and preserve ${action.name}`,
+        startedTick: decisionTick,
+      };
+    }
+  }
+
+  let committedGoal = directive.goal;
+  let actionId = directive.actionId;
+  let targetMaterial = directive.targetMaterial;
+  if (agent.craftingTarget) {
+    committedGoal = agent.craftingTarget.mode === "creative" ? "create" : "craft";
+    actionId = actionIdForGoal(committedGoal);
+    targetMaterial = missingCraftingMaterial(agent) ?? agent.craftingTarget.ingredients[0];
+    for (const material of new Set(agent.craftingTarget.ingredients)) {
+      agent.materialPurposes[material] = agent.craftingTarget.purpose;
+    }
+  } else if (committedGoal === "craft" || committedGoal === "create") {
+    committedGoal = "explore";
+    actionId = "survey";
+  }
+  if (!agent.knownActionIds.includes(actionId ?? "")) actionId = actionIdForGoal(committedGoal);
   const icon = assignableActionIcons.includes(
     directive.icon as (typeof assignableActionIcons)[number],
   )
@@ -862,16 +1106,11 @@ export function applyDirective(
     : undefined;
   agent.directive = {
     ...directive,
+    goal: committedGoal,
+    targetMaterial,
     actionId,
     icon,
-    actionProposal: proposal
-      ? {
-          name: proposal.name,
-          icon: proposal.icon,
-          algorithm: proposal.algorithm,
-          program: proposal.program,
-        }
-      : undefined,
+    actionProposal: undefined,
     note: directive.note.slice(0, 120),
     speech: directive.speech ? normalizeSpeech(directive.speech) : undefined,
   };
@@ -890,7 +1129,7 @@ export function applyDirective(
   addEvent(
     state,
     "decision",
-    `${agent.name} chose ${directive.goal}: ${directive.note.slice(0, 58)}`,
+    `${agent.name} chose ${committedGoal}: ${directive.note.slice(0, 58)}`,
     agent.x,
     agent.y,
     decisionTick,
@@ -941,9 +1180,16 @@ export function decisionObservation(state: WorldState, agent: Agent): Record<str
     localMoisture: Number(tile.moisture.toFixed(2)),
     localContamination: Number(tile.contamination.toFixed(2)),
     energy: Number(agent.energy.toFixed(2)),
+    curiosity: Number(agent.curiosity.toFixed(2)),
+    creativeSessionEligible:
+      !agent.craftingTarget &&
+      agent.curiosity >= CREATIVE_CURIOSITY_THRESHOLD &&
+      state.tick - agent.lastCreativeTick >= CREATIVE_SESSION_COOLDOWN_TICKS,
     inventory: Object.fromEntries(
       Object.entries(agent.inventory).map(([key, value]) => [key, Number(value.toFixed(1))]),
     ),
+    materialPurposes: agent.materialPurposes,
+    craftingTarget: agent.craftingTarget,
     visibleArtifacts,
     knownStations: state.stations.filter((station) => distanceSquared(agent, station) <= 100),
     previousPlan: agent.directive,
@@ -954,6 +1200,10 @@ export function decisionObservation(state: WorldState, agent: Agent): Record<str
       .filter((action) => agent.knownActionIds.includes(action.id))
       .slice(-12)
       .map(({ id, name, icon, algorithm, program }) => ({ id, name, icon, algorithm, program })),
+    craftableActions: state.actionLibrary
+      .filter((action) => action.recipe && !agent.knownActionIds.includes(action.id))
+      .slice(-12)
+      .map(({ id, name, icon, recipe }) => ({ id, name, icon, recipe })),
   };
 }
 

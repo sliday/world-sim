@@ -367,6 +367,24 @@ a:focus-visible {
   background: var(--acid);
 }
 
+.curiosity-state {
+  padding-top: 0;
+  color: var(--purple);
+}
+
+.curiosity-track i {
+  background: var(--purple);
+}
+
+.crafting-commitment {
+  border-color: rgba(191, 147, 224, 0.28);
+  background: rgba(191, 147, 224, 0.1);
+}
+
+.crafting-commitment strong {
+  color: var(--purple);
+}
+
 .agent-directive {
   padding: 13px;
   border-block: 1px solid rgba(242, 237, 207, 0.12);
@@ -547,6 +565,18 @@ a:focus-visible {
   color: var(--cream);
   font-size: 15px;
   font-weight: 500;
+}
+
+.agent-inventory .reserved {
+  background: rgba(191, 147, 224, 0.08);
+}
+
+.agent-inventory em {
+  padding: 2px 3px;
+  color: var(--purple);
+  font-size: 6px;
+  font-style: normal;
+  letter-spacing: 0.08em;
 }
 
 .inventory-label {

@@ -17,7 +17,6 @@ export class WorldClient {
 
   subscribe(listener: SnapshotListener): () => void {
     this.listeners.add(listener);
-    listener(this.snapshotValue);
     return () => this.listeners.delete(listener);
   }
 

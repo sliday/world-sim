@@ -35,6 +35,7 @@ import type {
   AgentActionProposal,
   AgentDirective,
   ControllerAction,
+  CreativeSessionProposal,
   MaterialKind,
   WorldDiaryEntry,
   WorldEvent,
@@ -182,7 +183,10 @@ const agentDirectiveResponseFormat = {
     schema: {
       type: "object",
       properties: {
-        goal: { type: "string", enum: ["explore", "gather", "build", "inspect", "maintain"] },
+        goal: {
+          type: "string",
+          enum: ["explore", "gather", "build", "inspect", "maintain", "craft", "create"],
+        },
         targetMaterial: {
           type: "string",
           enum: ["water", "fungus", "mineral", "cellulose", "chitin"],
@@ -194,19 +198,31 @@ const agentDirectiveResponseFormat = {
         note: { type: "string", maxLength: 120 },
         actionId: { type: "string", maxLength: 32 },
         icon: { type: "string", enum: assignableActionIcons },
-        actionProposal: {
-          type: "object",
+        craftActionId: { type: "string", maxLength: 32 },
+        creativeSession: {
+          type: ["object", "null"],
           properties: {
-            name: { type: "string", maxLength: 32 },
+            name: { type: "string", minLength: 2, maxLength: 32 },
             icon: { type: "string", enum: assignableActionIcons },
-            algorithm: { type: "string", maxLength: 180 },
+            algorithm: { type: "string", minLength: 12, maxLength: 180 },
             program: {
               type: "array",
               items: { type: "string", enum: actionPrimitives },
+              minItems: 2,
               maxItems: 4,
             },
+            ingredients: {
+              type: "array",
+              items: {
+                type: "string",
+                enum: ["water", "fungus", "mineral", "cellulose", "chitin"],
+              },
+              minItems: 2,
+              maxItems: 2,
+            },
+            purpose: { type: "string", minLength: 8, maxLength: 120 },
           },
-          required: ["name", "icon", "algorithm", "program"],
+          required: ["name", "icon", "algorithm", "program", "ingredients", "purpose"],
           additionalProperties: false,
         },
         speech: { type: "string", maxLength: 80 },
@@ -218,7 +234,8 @@ const agentDirectiveResponseFormat = {
         "note",
         "actionId",
         "icon",
-        "actionProposal",
+        "craftActionId",
+        "creativeSession",
         "speech",
       ],
       additionalProperties: false,
@@ -649,6 +666,10 @@ export class WorldRoom extends DurableObject<Env> {
       nullclawPolicy: this.nullclawPolicy() !== undefined,
       actionSandbox: "nullclaw-wasm-dsl",
       actionLibrarySize: world.actionLibrary.length,
+      activeCraftingCommitments: world.agents.filter((agent) => agent.craftingTarget).length,
+      completedCrafts: world.agents.reduce((total, agent) => total + agent.crafts, 0),
+      meanCuriosity:
+        world.agents.reduce((total, agent) => total + agent.curiosity, 0) / world.agents.length,
       memoryTokenCapPerAgent: AGENT_MEMORY_TOKEN_CAP,
       worldDecisionIntervalMs: positiveInteger(this.env.ALARM_INTERVAL_MS, 1_000, 60_000),
       decisionsPerWorldTick: world.agents.length,
@@ -815,7 +836,7 @@ export class WorldRoom extends DurableObject<Env> {
         continue;
       }
       const agent = world.agents.find((candidate) => candidate.id === outcome.agentId);
-      const candidate = outcome.result.directive.actionProposal;
+      const candidate = outcome.result.directive.creativeSession;
       const extensionFacilitated = Boolean(
         agent &&
         candidate &&
@@ -1069,7 +1090,7 @@ export class WorldRoom extends DurableObject<Env> {
             {
               role: "system",
               content:
-                "You are one initially identical embodied agent in a persistent material world. This is your fixed scheduled macroturn. The activity you choose now repeats cyclically until your next AI opportunity in 60 world ticks. SOUL.md is policy, USER.md names the beneficiary, and MEMORY.md is fallible experience. Choose an existing actionId from availableActions and one Unicode icon. You may propose one new action only when local evidence suggests a useful reusable algorithm; never restate or rename an available action. New programs may compose only listed bounded primitives; they cannot create resources or declare outcomes. If no new action is warranted, return actionProposal with empty name and algorithm, the chosen icon, and an empty program. speech must exchange one useful observed fact in one 3-8 word sentence of basic caveman telegraphic English, like 'Water low here, seek tidal.' Never use two sentences. The deterministic sandbox executes one primitive per tick and the world decides consequences. note: max 12 words.",
+                "You are one initially identical embodied agent in a persistent material world. This is your fixed scheduled macroturn. The activity you choose now repeats cyclically until your next AI opportunity in 60 world ticks. SOUL.md is policy, USER.md names the beneficiary, and MEMORY.md is fallible experience. Choose an existing actionId from availableActions and one Unicode icon. Carried water is automatically consumed when energy is low. Gathering tidal water is an emergency refill, not the default: choose it when energy is below 0.55 and water inventory is below 1.5; once water inventory reaches 3, choose an underrepresented non-water material, build, inspect, maintain, explore, craft, or create. Never choose water merely because the local tile is wet. A pending craftingTarget is a commitment: continue goal craft or create until its missing materials are gathered and the thing is built. MaterialPurposes explains why inventory is reserved. Use goal craft with craftActionId to learn one listed craftableAction. Outside the emergency-water condition, when creativeSessionEligible is true and energy is above 0.25, choose goal create: propose one genuinely new reusable action, two physical ingredients, and a concrete purpose. Otherwise return creativeSession as null. This is a Creative Session, not instant invention. The deterministic sandbox must gather and consume both ingredients before registering the action; failed or duplicate mixes do not satisfy curiosity. New programs may compose only listed bounded primitives and cannot create resources or declare outcomes. speech must exchange one useful observed fact in one 3-8 word sentence of basic caveman telegraphic English, like 'Water low here, seek tidal.' Never use two sentences. The deterministic sandbox executes one primitive per tick and the world decides consequences. note: max 12 words.",
             },
             {
               role: "user",
@@ -1114,15 +1135,19 @@ export class WorldRoom extends DurableObject<Env> {
       } catch {
         throw new ModelDecisionError("OpenRouter directive was not valid JSON", false);
       }
-      const actionProposal = parsed.actionProposal as AgentActionProposal | undefined;
+      const creativeSession =
+        parsed.creativeSession == null
+          ? undefined
+          : (parsed.creativeSession as CreativeSessionProposal);
       if (
         !isGoal(parsed.goal) ||
         !isMaterial(parsed.targetMaterial) ||
         !isAction(parsed.controllerAction) ||
         typeof parsed.actionId !== "string" ||
+        typeof parsed.craftActionId !== "string" ||
         typeof parsed.speech !== "string" ||
         !assignableActionIcons.includes(parsed.icon as (typeof assignableActionIcons)[number]) ||
-        !isActionProposalShape(actionProposal)
+        (creativeSession !== undefined && !isCreativeSessionShape(creativeSession))
       ) {
         throw new ModelDecisionError("OpenRouter directive failed local schema validation", false);
       }
@@ -1136,7 +1161,8 @@ export class WorldRoom extends DurableObject<Env> {
           model: data.model,
           actionId: parsed.actionId.slice(0, 32),
           icon: parsed.icon,
-          actionProposal,
+          craftActionId: parsed.craftActionId.slice(0, 32),
+          creativeSession,
           speech: parsed.speech.slice(0, 80),
         },
         model: data.model,
@@ -1157,7 +1183,7 @@ export class WorldRoom extends DurableObject<Env> {
 function isGoal(value: unknown): value is AgentDirective["goal"] {
   return (
     typeof value === "string" &&
-    ["explore", "gather", "build", "inspect", "maintain"].includes(value)
+    ["explore", "gather", "build", "inspect", "maintain", "craft", "create"].includes(value)
   );
 }
 
@@ -1185,6 +1211,18 @@ function isActionProposalShape(value: unknown): value is AgentActionProposal {
     Array.isArray(proposal.program) &&
     proposal.program.length <= 4 &&
     proposal.program.every((step) => actionPrimitives.includes(step))
+  );
+}
+
+function isCreativeSessionShape(value: unknown): value is CreativeSessionProposal {
+  if (!isActionProposalShape(value)) return false;
+  const session = value as Partial<CreativeSessionProposal>;
+  return (
+    Array.isArray(session.ingredients) &&
+    session.ingredients.length === 2 &&
+    session.ingredients.every(isMaterial) &&
+    typeof session.purpose === "string" &&
+    session.purpose.length <= 120
   );
 }
 

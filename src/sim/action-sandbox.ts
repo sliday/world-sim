@@ -6,6 +6,7 @@ import type {
   AgentGoal,
   AgentScript,
   ActionPrimitive,
+  MaterialKind,
 } from "./types";
 import { identityHash32 } from "./names";
 
@@ -19,6 +20,9 @@ export const actionPrimitives = [
   "inspect-local",
   "repair-local",
   "seek-artifact",
+  "craft-local",
+  "mix-local",
+  "seek-crafting-material",
 ] as const satisfies readonly ActionPrimitive[];
 
 export const assignableActionIcons = [
@@ -95,6 +99,28 @@ const baseActions: AgentActionDefinition[] = [
     createdTick: 0,
     uses: 0,
   },
+  {
+    id: "craft",
+    name: "Craft",
+    icon: "⌬",
+    algorithm:
+      "Combine the reserved materials into a known skill; seek and gather any missing ingredient.",
+    program: ["craft-local", "seek-crafting-material", "gather-local"],
+    authorId: "WORLD",
+    createdTick: 0,
+    uses: 0,
+  },
+  {
+    id: "creative-session",
+    name: "Creative Session",
+    icon: "✦",
+    algorithm:
+      "Try a new material pairing; seek and reserve ingredients until a novel bounded behavior is built.",
+    program: ["mix-local", "seek-crafting-material", "gather-local"],
+    authorId: "WORLD",
+    createdTick: 0,
+    uses: 0,
+  },
 ];
 
 export function baseActionLibrary(): AgentActionDefinition[] {
@@ -106,6 +132,8 @@ export function actionIdForGoal(goal: AgentGoal): string {
   if (goal === "build") return "fabricate";
   if (goal === "inspect") return "study";
   if (goal === "maintain") return "steward";
+  if (goal === "craft") return "craft";
+  if (goal === "create") return "creative-session";
   return "survey";
 }
 
@@ -173,6 +201,7 @@ export function registerAction(
   proposal: AgentActionProposal,
   authorId: string,
   tick: number,
+  recipe?: [MaterialKind, MaterialKind],
 ): AgentActionDefinition | undefined {
   if (!validateActionProposal(proposal)) return undefined;
   const signature = actionSignature(proposal);
@@ -189,9 +218,10 @@ export function registerAction(
     authorId,
     createdTick: tick,
     uses: 0,
+    recipe: recipe ? [...recipe] : undefined,
   };
   library.push(action);
-  if (library.length > 64) library.splice(5, library.length - 64);
+  if (library.length > 64) library.splice(baseActions.length, library.length - 64);
   return action;
 }
 
@@ -219,10 +249,13 @@ export function updateAgentScript(
   };
   agent.icon = agent.directive.icon ?? action.icon;
   action.uses += 1;
+  const purpose = Object.entries(agent.materialPurposes)
+    .map(([material, reason]) => `${material} → ${reason}`)
+    .join("; ");
   agent.documents.memoryMd =
-    `# MEMORY.md\nT${tick}: ${localSummary}\nCurrent algorithm: ${action.name} — ${action.algorithm}`.slice(
+    `# MEMORY.md\nT${tick}: ${localSummary}\nCurrent algorithm: ${action.name} — ${action.algorithm}${purpose ? `\nReserved materials: ${purpose}` : ""}`.slice(
       0,
-      420,
+      600,
     );
   return action;
 }

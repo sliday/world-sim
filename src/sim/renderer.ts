@@ -645,6 +645,8 @@ function drawAgent(
     fabricating: "#ffd272",
     maintaining: "#a8dc78",
     forking: "#f493d1",
+    crafting: "#bf93e0",
+    creating: "#dbf45c",
   };
   p.push();
   p.translate(Math.round(x), Math.round(y));
