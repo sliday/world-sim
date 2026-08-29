@@ -128,7 +128,7 @@ app.innerHTML = `
       </div>
 
       <footer class="credits">
-        <p>SIMULATION: P5.JS · EDGE STATE: CLOUDFLARE DURABLE OBJECTS · AGENT ROUTING: NULLCLAW EDGE POLICY + OPENROUTER/AUTO</p>
+        <p>SIMULATION: P5.JS · EDGE STATE: CLOUDFLARE DURABLE OBJECTS · AGENT ROUTING: NULLCLAW EDGE POLICY + OPENROUTER/FREE</p>
         <p>PIXEL ICONS BY <a href="https://github.com/hackernoon/pixel-icon-library" target="_blank" rel="noreferrer">HACKERNOON</a>, USED UNMODIFIED UNDER <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noreferrer">CC BY 4.0</a> · PIXELIFY SANS UNDER OFL 1.1</p>
       </footer>
     </article>
@@ -342,7 +342,7 @@ function renderChrome(snapshot: PublicWorldSnapshot): void {
       .join("") || '<p class="quiet">The first agents are mapping the planet…</p>';
   const assisted = snapshot.engine.mode === "openrouter-assisted";
   engineStatus.classList.toggle("assisted", assisted);
-  engineStatus.innerHTML = `<b></b> ${assisted ? "OPENROUTER/AUTO" : "DETERMINISTIC SEED"} · NULLCLAW SANDBOX`;
+  engineStatus.innerHTML = `<b></b> ${assisted ? "OPENROUTER/FREE" : "DETERMINISTIC SEED"} · NULLCLAW SANDBOX`;
 }
 
 function showAbout(show: boolean, updateHistory = true): void {
