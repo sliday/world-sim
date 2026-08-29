@@ -3,7 +3,13 @@ import { botPortraitSvg } from "./sim/bot-appearance";
 import "./style.css";
 import { WorldClient } from "./sim/client";
 import { createWorldSketch } from "./sim/renderer";
-import type { Agent, MaterialKind, PublicWorldSnapshot, WorldEvent } from "./sim/types";
+import type {
+  Agent,
+  MaterialKind,
+  PublicWorldSnapshot,
+  WorldDiaryEntry,
+  WorldEvent,
+} from "./sim/types";
 
 const materialVisual: Record<MaterialKind, { icon: string; rune: string }> = {
   water: { icon: "hn-cloud-rain", rune: "≈" },
@@ -61,6 +67,7 @@ app.innerHTML = `
 
     <section class="event-panel glass-panel" aria-label="Events in the world">
       <div class="panel-kicker"><span>LIVE TRACE</span><span id="tick-label">TICK 0</span></div>
+      <div id="world-diary" class="world-diary"></div>
       <div id="event-list" class="event-list" aria-live="polite"></div>
     </section>
 
@@ -132,6 +139,7 @@ const client = new WorldClient();
 const canvasHost = document.querySelector<HTMLElement>("#world-canvas")!;
 const aboutPage = document.querySelector<HTMLElement>("#about-page")!;
 const eventList = document.querySelector<HTMLElement>("#event-list")!;
+const worldDiary = document.querySelector<HTMLElement>("#world-diary")!;
 const engineStatus = document.querySelector<HTMLElement>("#engine-status")!;
 const worldShell = document.querySelector<HTMLElement>(".world-shell")!;
 const agentInspector = document.querySelector<HTMLElement>("#agent-inspector")!;
@@ -156,6 +164,19 @@ function eventMarkup(event: WorldEvent, newest: boolean): string {
     decision: "hn-sparkles",
   };
   return `<div class="event ${newest ? "newest" : ""}"><i class="hn ${icon[event.kind]}"></i><p>${escapeHtml(event.text)}<span>T${event.tick}</span></p></div>`;
+}
+
+function diaryMarkup(entry: WorldDiaryEntry | undefined): string {
+  if (!entry) return "";
+  const lines = entry.lines
+    .slice(0, 5)
+    .map((line) => `<li>${escapeHtml(line)}</li>`)
+    .join("");
+  if (!lines) return "";
+  return `<article class="diary-entry">
+    <div><span><i class="hn hn-book"></i> WORLD DIARY</span><b>T${entry.startTick.toLocaleString()}–T${entry.endTick.toLocaleString()}</b></div>
+    <ul>${lines}</ul>
+  </article>`;
 }
 
 function escapeHtml(value: string): string {
@@ -296,6 +317,7 @@ function renderChrome(snapshot: PublicWorldSnapshot): void {
   metric("metric-contact", `${Math.round(snapshot.metrics.artifactContactRate * 100)}%`);
   metric("metric-entropy", snapshot.metrics.spatialEntropy.toFixed(2));
   metric("tick-label", `TICK ${snapshot.tick.toLocaleString()}`);
+  worldDiary.innerHTML = diaryMarkup(snapshot.diary?.[0]);
   eventList.innerHTML =
     snapshot.events
       .slice(0, 5)

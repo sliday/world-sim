@@ -9,6 +9,7 @@ This is a live implementation track toward the paper's core mechanics, not a rep
 - 100 policy-equivalent agents receive local observations; a fresh world initializes them with identical policy and energy.
 - Every agent stays with one cyclic, bounded activity between fixed model macroturns and attempts exactly one primitive on each world tick.
 - Macroturn phases are persistent and staggered: every agent gets one AI reassessment opportunity per 60 authoritative ticks, with at most two agents due on any tick.
+- Every 3,600 authoritative ticks, an observer model turns the persisted event trace into a factual 1–5 line world diary focused on new actions, mapped resources, inheritance, adoption, and meaningful change.
 - A toroidal 96×72 planet has finite resources, facilities, moisture, contamination, and persistent artifacts.
 - Agents can explore, gather, construct, inspect, maintain, and fork constrained artifact controllers.
 - The deterministic consequence layer—not an LLM—validates resources, actions, health, performance, and failure.
@@ -34,6 +35,8 @@ The full native NullClaw daemon does not run inside a Cloudflare Worker. This pr
 The scheduler follows SwarmWorld's fixed per-agent macroturn phases rather than selecting whichever agents look stale. The paper's primary population study used a 50-tick interval; this observatory deliberately uses 60 ticks so one authoritative tick approximates one second and every agent gets one AI opportunity per minute. A macroturn is resolved before its candidate world tick, and retryable provider failures preserve the activity and scheduled tick instead of silently skipping an agent.
 
 There is one explicit product-driven variation from Algorithm 1: SwarmWorld consumes a finite action queue and waits when it empties, while this world cycles a bounded activity program until the next macroturn. That variation implements the requirement that a bot remain engaged between reassessments. The consequence boundary remains the same: the model chooses a validated activity, and the deterministic simulator attempts exactly one primitive per agent per tick.
+
+The hourly world diary is an observer layer over Algorithm 1's `AppendTrace`, not agent memory or an authoritative consequence. Raw notable events are persisted between diary checkpoints; the model may organize only supplied evidence, and diary failure never blocks world time. Tracking begins at migration, so the first entry does not fabricate earlier history.
 
 ## Local development
 

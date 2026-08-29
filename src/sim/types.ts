@@ -181,6 +181,15 @@ export interface WorldEvent {
   y: number;
 }
 
+export interface WorldDiaryEntry {
+  id: number;
+  startTick: number;
+  endTick: number;
+  lines: string[];
+  model?: string;
+  createdAt: number;
+}
+
 export interface WorldMetrics {
   activeAgents: number;
   artifacts: number;
@@ -228,6 +237,7 @@ export interface WorldState {
 }
 
 export interface PublicWorldSnapshot extends WorldState {
+  diary: WorldDiaryEntry[];
   engine: {
     mode: "deterministic" | "openrouter-assisted";
     model: string;

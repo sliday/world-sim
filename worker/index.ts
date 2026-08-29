@@ -26,11 +26,18 @@ import {
   memoryRunKey,
   type DurableMemoryEntry,
 } from "../src/sim/memory-log";
+import {
+  nextWorldDiaryTick,
+  normalizeWorldDiaryLines,
+  WORLD_DIARY_INTERVAL_TICKS,
+} from "../src/sim/world-diary";
 import type {
   AgentActionProposal,
   AgentDirective,
   ControllerAction,
   MaterialKind,
+  WorldDiaryEntry,
+  WorldEvent,
   WorldState,
 } from "../src/sim/types";
 
@@ -60,6 +67,12 @@ interface OpenRouterResponse {
 
 interface ModelDirectiveResult {
   directive: AgentDirective;
+  model?: string;
+  cost: number;
+}
+
+interface ModelDiaryResult {
+  lines: string[];
   model?: string;
   cost: number;
 }
@@ -108,6 +121,37 @@ interface AgentMemoryView {
   compactions: number;
   summary: string;
   recent: DurableMemoryEntry[];
+}
+
+interface DiaryEntryRow {
+  [key: string]: SqlStorageValue;
+  id: number;
+  startTick: number;
+  endTick: number;
+  linesJson: string;
+  model: string;
+  createdAt: number;
+}
+
+interface DiaryStateRow {
+  [key: string]: SqlStorageValue;
+  startTick: number;
+  nextTick: number;
+  baselineJson: string;
+  lastError: string;
+}
+
+interface DiaryEventRow {
+  [key: string]: SqlStorageValue;
+  tick: number;
+  kind: string;
+  text: string;
+}
+
+interface DiaryEventCountRow {
+  [key: string]: SqlStorageValue;
+  kind: string;
+  count: number;
 }
 
 interface PolicyExports extends WebAssembly.Exports {
@@ -182,6 +226,27 @@ const agentDirectiveResponseFormat = {
   },
 } as const;
 
+const worldDiaryResponseFormat = {
+  type: "json_schema",
+  json_schema: {
+    name: "world_diary",
+    strict: true,
+    schema: {
+      type: "object",
+      properties: {
+        lines: {
+          type: "array",
+          minItems: 1,
+          maxItems: 5,
+          items: { type: "string", maxLength: 140 },
+        },
+      },
+      required: ["lines"],
+      additionalProperties: false,
+    },
+  },
+} as const;
+
 function json(data: unknown, init: ResponseInit = {}): Response {
   const headers = new Headers(responseHeaders);
   for (const [name, value] of new Headers(init.headers)) headers.set(name, value);
@@ -227,6 +292,30 @@ export class WorldRoom extends DurableObject<Env> {
           tokens INTEGER NOT NULL,
           compactions INTEGER NOT NULL,
           through_seq INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS world_diary_events (
+          id TEXT PRIMARY KEY,
+          tick INTEGER NOT NULL,
+          kind TEXT NOT NULL,
+          text TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS world_diary_events_tick
+          ON world_diary_events(tick);
+        CREATE TABLE IF NOT EXISTS world_diary_entries (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          start_tick INTEGER NOT NULL,
+          end_tick INTEGER NOT NULL UNIQUE,
+          lines_json TEXT NOT NULL,
+          model TEXT NOT NULL,
+          cost REAL NOT NULL,
+          created_at INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS world_diary_state (
+          singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+          start_tick INTEGER NOT NULL,
+          next_tick INTEGER NOT NULL,
+          baseline_json TEXT NOT NULL,
+          last_error TEXT NOT NULL DEFAULT ''
         );
       `);
       const memoryColumns = new Set(
@@ -420,6 +509,88 @@ export class WorldRoom extends DurableObject<Env> {
     return this.readAgentMemory(agentId, 18);
   }
 
+  private diaryBaseline(world: WorldState): Record<string, unknown> {
+    return {
+      tick: world.tick,
+      artifacts: world.artifacts.length,
+      activeArtifacts: world.artifacts.filter((artifact) => artifact.health > 0.1).length,
+      highestGeneration: Math.max(0, ...world.artifacts.map((artifact) => artifact.generation)),
+      actionIds: world.actionLibrary.map((action) => action.id),
+      metrics: {
+        discoveryFrontierPerformance: world.metrics.discoveryFrontierPerformance,
+        validatedInventions: world.metrics.validatedInventions,
+        physicalReuseFraction: world.metrics.physicalReuseFraction,
+        portfolioResilience: world.metrics.portfolioResilience,
+      },
+    };
+  }
+
+  private ensureDiaryState(world: WorldState): DiaryStateRow {
+    const existing = this.ctx.storage.sql
+      .exec<DiaryStateRow>(
+        `SELECT start_tick AS startTick, next_tick AS nextTick,
+                baseline_json AS baselineJson, last_error AS lastError
+         FROM world_diary_state WHERE singleton = 1`,
+      )
+      .toArray()[0];
+    if (existing) return existing;
+    const baselineJson = JSON.stringify(this.diaryBaseline(world));
+    const nextTick = nextWorldDiaryTick(world.tick);
+    this.ctx.storage.sql.exec(
+      `INSERT INTO world_diary_state
+        (singleton, start_tick, next_tick, baseline_json, last_error)
+       VALUES (1, ?, ?, ?, '')`,
+      world.tick,
+      nextTick,
+      baselineJson,
+    );
+    return { startTick: world.tick, nextTick, baselineJson, lastError: "" };
+  }
+
+  private appendDiaryEvent(event: WorldEvent): void {
+    this.ctx.storage.sql.exec(
+      `INSERT OR IGNORE INTO world_diary_events (id, tick, kind, text)
+       VALUES (?, ?, ?, ?)`,
+      event.id,
+      event.tick,
+      event.kind,
+      event.text.replace(/\s+/g, " ").trim().slice(0, 240),
+    );
+  }
+
+  private readWorldDiary(limit = 12): WorldDiaryEntry[] {
+    return this.ctx.storage.sql
+      .exec<DiaryEntryRow>(
+        `SELECT id, start_tick AS startTick, end_tick AS endTick,
+                lines_json AS linesJson, model, created_at AS createdAt
+         FROM world_diary_entries ORDER BY end_tick DESC LIMIT ?`,
+        Math.max(1, Math.min(168, Math.floor(limit))),
+      )
+      .toArray()
+      .map((row) => {
+        let lines: string[] = [];
+        try {
+          lines = normalizeWorldDiaryLines(JSON.parse(row.linesJson));
+        } catch {
+          lines = [];
+        }
+        return {
+          id: row.id,
+          startTick: row.startTick,
+          endTick: row.endTick,
+          lines,
+          model: row.model || undefined,
+          createdAt: row.createdAt,
+        };
+      })
+      .filter((entry) => entry.lines.length > 0);
+  }
+
+  async worldDiary(): Promise<{ intervalTicks: number; entries: WorldDiaryEntry[] }> {
+    await this.load();
+    return { intervalTicks: WORLD_DIARY_INTERVAL_TICKS, entries: this.readWorldDiary(168) };
+  }
+
   private async load(): Promise<WorldState> {
     if (this.world) return this.world;
     const stored = await this.ctx.storage.get<WorldState>("world-v2");
@@ -434,6 +605,7 @@ export class WorldRoom extends DurableObject<Env> {
       advanceWorld(this.world, 480);
     }
     this.seedAgentMemories(this.world);
+    this.ensureDiaryState(this.world);
     return this.world;
   }
 
@@ -445,17 +617,20 @@ export class WorldRoom extends DurableObject<Env> {
     }
   }
 
+  private publicSnapshot(world: WorldState): ReturnType<typeof publicSnapshot> {
+    const snapshot = publicSnapshot(world, openRouterEnabled(this.env), this.env.OPENROUTER_MODEL);
+    snapshot.diary = this.readWorldDiary(12);
+    return snapshot;
+  }
+
   async snapshot(): Promise<ReturnType<typeof publicSnapshot>> {
     await this.ensureAlarm();
-    return publicSnapshot(
-      await this.load(),
-      openRouterEnabled(this.env),
-      this.env.OPENROUTER_MODEL,
-    );
+    return this.publicSnapshot(await this.load());
   }
 
   async health(): Promise<Record<string, unknown>> {
     const world = await this.load();
+    const diaryState = this.ensureDiaryState(world);
     await this.ensureAlarm();
     return {
       ok: true,
@@ -478,6 +653,10 @@ export class WorldRoom extends DurableObject<Env> {
       worldDecisionIntervalMs: positiveInteger(this.env.ALARM_INTERVAL_MS, 1_000, 60_000),
       decisionsPerWorldTick: world.agents.length,
       modelMacroturnIntervalTicks: MODEL_MACROTURN_INTERVAL_TICKS,
+      worldDiaryIntervalTicks: WORLD_DIARY_INTERVAL_TICKS,
+      worldDiaryEntries: this.readWorldDiary(168).length,
+      nextWorldDiaryTick: diaryState.nextTick,
+      worldDiaryLastError: diaryState.lastError || undefined,
     };
   }
 
@@ -517,13 +696,13 @@ export class WorldRoom extends DurableObject<Env> {
         );
       }
       for (const event of world.events.filter((candidate) => !previousEvents.has(candidate.id))) {
+        this.appendDiaryEvent(event);
         const agent = world.agents.find((candidate) => event.text.startsWith(`${candidate.name} `));
         if (agent) this.appendAgentMemory(agent.id, event.tick, event.kind, event.text);
       }
+      await this.maybeWriteWorldDiary(world);
       await this.ctx.storage.put("world-v2", world);
-      const payload = JSON.stringify(
-        publicSnapshot(world, openRouterEnabled(this.env), this.env.OPENROUTER_MODEL),
-      );
+      const payload = JSON.stringify(this.publicSnapshot(world));
       for (const socket of this.ctx.getWebSockets()) {
         try {
           socket.send(payload);
@@ -694,6 +873,178 @@ export class WorldRoom extends DurableObject<Env> {
     return !retryableFailure;
   }
 
+  private async maybeWriteWorldDiary(world: WorldState): Promise<void> {
+    const state = this.ensureDiaryState(world);
+    if (world.tick < state.nextTick) return;
+    if (!openRouterEnabled(this.env)) {
+      this.deferWorldDiary(world.tick, "OpenRouter disabled");
+      return;
+    }
+    const dailyLimit = positiveInteger(this.env.MAX_LLM_CALLS_PER_DAY, 21_600, 500_000);
+    if (world.llm.callsToday >= dailyLimit) {
+      this.deferWorldDiary(world.tick, "daily model limit reached");
+      return;
+    }
+
+    const counts = Object.fromEntries(
+      this.ctx.storage.sql
+        .exec<DiaryEventCountRow>(
+          `SELECT kind, COUNT(*) AS count FROM world_diary_events
+           WHERE tick > ? AND tick <= ? GROUP BY kind`,
+          state.startTick,
+          world.tick,
+        )
+        .toArray()
+        .map((row) => [row.kind, row.count]),
+    );
+    const recentEvents = this.ctx.storage.sql
+      .exec<DiaryEventRow>(
+        `SELECT tick, kind, text FROM world_diary_events
+         WHERE tick > ? AND tick <= ? ORDER BY tick DESC LIMIT 80`,
+        state.startTick,
+        world.tick,
+      )
+      .toArray()
+      .reverse();
+    let baseline: Record<string, unknown> = {};
+    try {
+      baseline = JSON.parse(state.baselineJson) as Record<string, unknown>;
+    } catch {
+      baseline = {};
+    }
+    const previousActionIds = new Set(
+      Array.isArray(baseline.actionIds)
+        ? baseline.actionIds.filter((value): value is string => typeof value === "string")
+        : [],
+    );
+    const newActions = world.actionLibrary
+      .filter((action) => !previousActionIds.has(action.id))
+      .map(({ id, name, algorithm, program }) => ({ id, name, algorithm, program }));
+    const evidence = {
+      interval: { startTick: state.startTick, endTick: world.tick },
+      eventCounts: counts,
+      recentEvents,
+      newActions,
+      before: baseline,
+      after: this.diaryBaseline(world),
+      newestArtifacts: world.artifacts.slice(-12).map((artifact) => ({
+        id: artifact.id,
+        generation: artifact.generation,
+        parentId: artifact.parentId,
+        creatorId: artifact.creatorId,
+        controller: artifact.controller.action,
+        performance: Math.round(artifact.performance * 1_000) / 1_000,
+        uses: artifact.uses,
+      })),
+    };
+
+    try {
+      const result = await this.requestWorldDiary(JSON.stringify(evidence));
+      const createdAt = Date.now();
+      this.ctx.storage.sql.exec(
+        `INSERT INTO world_diary_entries
+          (start_tick, end_tick, lines_json, model, cost, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        state.startTick,
+        world.tick,
+        JSON.stringify(result.lines),
+        result.model ?? "",
+        result.cost,
+        createdAt,
+      );
+      this.ctx.storage.sql.exec(
+        `UPDATE world_diary_state
+         SET start_tick = ?, next_tick = ?, baseline_json = ?, last_error = ''
+         WHERE singleton = 1`,
+        world.tick,
+        nextWorldDiaryTick(world.tick),
+        JSON.stringify(this.diaryBaseline(world)),
+      );
+      this.ctx.storage.sql.exec("DELETE FROM world_diary_events WHERE tick <= ?", world.tick);
+      world.llm.callsToday += 1;
+      world.llm.totalCalls += 1;
+      world.llm.totalCost += result.cost;
+      world.llm.lastModel = result.model ?? world.llm.lastModel;
+    } catch (error) {
+      this.deferWorldDiary(
+        world.tick,
+        error instanceof Error ? error.message : "world diary request failed",
+      );
+    }
+  }
+
+  private deferWorldDiary(tick: number, reason: string): void {
+    this.ctx.storage.sql.exec(
+      `UPDATE world_diary_state SET next_tick = ?, last_error = ? WHERE singleton = 1`,
+      tick + MODEL_MACROTURN_INTERVAL_TICKS,
+      reason.replace(/\s+/g, " ").trim().slice(0, 160),
+    );
+  }
+
+  private async requestWorldDiary(evidence: string): Promise<ModelDiaryResult> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12_000);
+    try {
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          Authorization: "Bearer " + this.env.OPENROUTER_API_KEY,
+          "Content-Type": "application/json",
+          "HTTP-Referer": "https://stigmergy-world.stas6236.workers.dev",
+          "X-OpenRouter-Title": "Stigmergy World Diary",
+        },
+        body: JSON.stringify({
+          models: openRouterModels(this.env),
+          session_id: "stigmergy-world-diary",
+          messages: [
+            {
+              role: "system",
+              content:
+                "You are the concise observer diary for a persistent SwarmWorld-inspired simulation. Convert one authoritative trace interval into 1-5 short, readable lines. Prioritize genuinely new or evolving phenomena: newly authored bounded actions or skills, newly mapped resources, artifact growth or inheritance, adoption, collaboration, and meaningful setbacks. Use only supplied trace evidence. Distinguish events from outcomes; do not invent causes, success, novelty, or scientific validation. Omit routine repetition and bot-by-bot narration. Each line must stand alone, use plain English, and stay under 140 characters.",
+            },
+            { role: "user", content: `Authoritative interval evidence: ${evidence}` },
+          ],
+          response_format: worldDiaryResponseFormat,
+          provider: { require_parameters: true },
+          max_tokens: 300,
+          temperature: 0.35,
+        }),
+      });
+      let data: OpenRouterResponse;
+      try {
+        data = (await response.json()) as OpenRouterResponse;
+      } catch {
+        throw new ModelDecisionError("World diary returned invalid response JSON", true);
+      }
+      if (!response.ok)
+        throw new ModelDecisionError(
+          data.error?.message ?? `World diary HTTP ${response.status}`,
+          response.status === 408 || response.status === 429 || response.status >= 500,
+        );
+      const content = data.choices?.[0]?.message?.content;
+      if (!content) throw new ModelDecisionError("World diary returned no content", true);
+      let parsed: { lines?: unknown };
+      try {
+        parsed = JSON.parse(content) as { lines?: unknown };
+      } catch {
+        throw new ModelDecisionError("World diary was not valid JSON", false);
+      }
+      const lines = normalizeWorldDiaryLines(parsed.lines);
+      if (!lines.length)
+        throw new ModelDecisionError("World diary contained no readable lines", false);
+      return { lines, model: data.model, cost: data.usage?.cost ?? 0 };
+    } catch (error) {
+      if (error instanceof ModelDecisionError) throw error;
+      throw new ModelDecisionError(
+        error instanceof Error ? error.message : "World diary transport failed",
+        true,
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   private async requestDirective(
     agentId: string,
     observation: string,
@@ -852,6 +1203,8 @@ export default {
       const memory = await world.agentMemory(agentId);
       return memory ? json(memory) : json({ error: "Agent not found" }, { status: 404 });
     }
+    if (url.pathname === "/api/world-diary" && request.method === "GET")
+      return json(await world.worldDiary());
     if (url.pathname === "/api/ws") return world.fetch(request);
     if (url.pathname.startsWith("/api/") && request.method !== "GET")
       return json({ error: "Method not allowed" }, { status: 405, headers: { Allow: "GET" } });

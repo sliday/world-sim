@@ -1044,6 +1044,7 @@ export function publicSnapshot(
   state.metrics = calculateMetrics(state);
   return {
     ...structuredClone(state),
+    diary: [],
     engine: {
       mode: openRouterEnabled ? "openrouter-assisted" : "deterministic",
       model,

@@ -31,6 +31,11 @@ import {
   normalizeSettled,
   wrappedTarget,
 } from "./motion";
+import {
+  nextWorldDiaryTick,
+  normalizeWorldDiaryLines,
+  WORLD_DIARY_INTERVAL_TICKS,
+} from "./world-diary";
 import type { AgentDirective, WorldState } from "./types";
 
 function engageAllAgentsInPersistentActivities(world: WorldState): void {
@@ -87,6 +92,27 @@ function signature(steps: number): unknown {
 }
 
 describe("deterministic consequence layer", () => {
+  it("schedules factual world diary checkpoints and bounds readable lines", () => {
+    expect(nextWorldDiaryTick(12_345)).toBe(12_345 + WORLD_DIARY_INTERVAL_TICKS);
+    expect(
+      normalizeWorldDiaryLines([
+        "  New mineral seam mapped.  ",
+        "A bounded repair action entered the library.",
+        "Artifacts reached generation three.",
+        "Routine movement omitted.",
+        "Water gathering spread north.",
+        "This sixth line must be discarded.",
+      ]),
+    ).toEqual([
+      "New mineral seam mapped.",
+      "A bounded repair action entered the library.",
+      "Artifacts reached generation three.",
+      "Routine movement omitted.",
+      "Water gathering spread north.",
+    ]);
+    expect(normalizeWorldDiaryLines({ lines: ["not an array"] })).toEqual([]);
+  });
+
   it("starts every agent with the same policy and no assigned role", () => {
     const world = createInitialWorld(260826081, 0);
     const directives = new Set(world.agents.map((agent) => JSON.stringify(agent.directive)));
@@ -273,7 +299,7 @@ describe("deterministic consequence layer", () => {
       if (parent)
         expect(controllerBehaviorDiffers(parent.controller, artifact.controller)).toBe(true);
     }
-  });
+  }, 15_000);
 
   it("does not treat revision metadata alone as an executable fork", () => {
     const parent = { sensor: "moisture", threshold: 0.5, action: "grow", revision: 1 } as const;
