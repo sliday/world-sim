@@ -4,6 +4,7 @@ import { buildCraftTree, craftMaterials, type CraftTreePairing } from "./sim/cra
 import "./style.css";
 import { WorldClient } from "./sim/client";
 import { createWorldSketch } from "./sim/renderer";
+import { formatTickAge } from "./sim/tick-age";
 import type {
   Agent,
   MaterialKind,
@@ -112,7 +113,11 @@ app.innerHTML = `
           <div><dt>LIVE ATTEMPTS</dt><dd id="craft-tree-attempts">0</dd></div>
         </dl>
       </header>
-      <div class="craft-tree-legend" aria-label="Craft tree status legend"><span><i class="discovered"></i> DISCOVERED</span><span><i class="active"></i> IN PROGRESS</span><span><i></i> NO DURABLE BEHAVIOR</span></div>
+      <div class="craft-tree-legend" aria-label="Craft tree status legend"><span><i class="discovered"></i> DISCOVERED</span><span><i class="active"></i> IN PROGRESS</span><span><i></i> NO DURABLE BEHAVIOR</span><span class="freshness-key">[NEW] = LAST 5 MIN</span></div>
+      <section class="recent-artifacts">
+        <header><div><span>RECENT PHYSICAL OUTPUTS</span><strong>ARTIFACTS</strong></div><small>NEWEST 8 · AUTHORITATIVE WORLD AGE</small></header>
+        <div id="recent-artifact-list" class="recent-artifact-list"></div>
+      </section>
       <div id="craft-tree-grid" class="craft-tree-grid" aria-live="polite"></div>
     </article>
   </section>
@@ -166,6 +171,7 @@ const engineStatus = document.querySelector<HTMLElement>("#engine-status")!;
 const worldShell = document.querySelector<HTMLElement>(".world-shell")!;
 const craftTreePage = document.querySelector<HTMLElement>("#craft-tree-page")!;
 const craftTreeGrid = document.querySelector<HTMLElement>("#craft-tree-grid")!;
+const recentArtifactList = document.querySelector<HTMLElement>("#recent-artifact-list")!;
 const eventPanel = document.querySelector<HTMLElement>(".event-panel")!;
 const traceToggle = document.querySelector<HTMLButtonElement>("#trace-toggle")!;
 const agentInspector = document.querySelector<HTMLElement>("#agent-inspector")!;
@@ -195,7 +201,12 @@ function metric(id: string, value: string): void {
   if (element) element.textContent = value;
 }
 
-function eventMarkup(event: WorldEvent, newest: boolean): string {
+function freshnessMarkup(nowTick: number, createdTick: number): string {
+  const age = formatTickAge(nowTick, createdTick);
+  return `<b class="freshness ${age.isNew ? "new" : ""}">${age.label}</b>`;
+}
+
+function eventMarkup(event: WorldEvent, newest: boolean, nowTick: number): string {
   const icon: Record<WorldEvent["kind"], string> = {
     discovery: "hn-location-pin",
     build: "hn-code-block",
@@ -206,7 +217,7 @@ function eventMarkup(event: WorldEvent, newest: boolean): string {
     craft: "hn-code-block",
     creative: "hn-sparkles",
   };
-  return `<div class="event ${newest ? "newest" : ""}"><i class="hn ${icon[event.kind]}"></i><p>${escapeHtml(event.text)}<span>T${event.tick}</span></p></div>`;
+  return `<div class="event ${newest ? "newest" : ""}"><i class="hn ${icon[event.kind]}"></i><p>${escapeHtml(event.text)}<span>T${event.tick.toLocaleString()} · ${freshnessMarkup(nowTick, event.tick)}</span></p></div>`;
 }
 
 function diaryMarkup(entry: WorldDiaryEntry | undefined): string {
@@ -233,7 +244,11 @@ function materialChip(material: MaterialKind): string {
   return `<span class="craft-material ${material}"><i class="hn ${visual.icon}"></i><b>${visual.rune}</b>${escapeHtml(material.toUpperCase())}</span>`;
 }
 
-function craftPairingMarkup(pairing: CraftTreePairing, agentCount: number): string {
+function craftPairingMarkup(
+  pairing: CraftTreePairing,
+  agentCount: number,
+  nowTick: number,
+): string {
   const discovered = pairing.actions.length > 0;
   const active = pairing.attempts.length > 0;
   const state = active ? "IN PROGRESS" : discovered ? "DISCOVERED" : "NO DISCOVERY";
@@ -243,12 +258,12 @@ function craftPairingMarkup(pairing: CraftTreePairing, agentCount: number): stri
         <div><strong>${escapeHtml(definition.icon)} ${escapeHtml(definition.name)}</strong><span>KNOWN BY ${knownBy} / ${agentCount}</span></div>
         <p>${escapeHtml(definition.algorithm)}</p>
         <code>${escapeHtml(definition.program.join(" → "))}</code>
-        <small>BUILT T${definition.createdTick.toLocaleString()} · ${escapeHtml(definition.authorId)} · ${definition.uses.toLocaleString()} USES</small>
+        <small>${freshnessMarkup(nowTick, definition.createdTick)} · BUILT T${definition.createdTick.toLocaleString()} · ${escapeHtml(definition.authorId)} · ${definition.uses.toLocaleString()} USES</small>
       </article>`,
     )
     .join("");
   const attempts = pairing.attempts.length
-    ? `<div class="craft-attempt"><span>${pairing.attempts.length} LIVE ${pairing.attempts.length === 1 ? "ATTEMPT" : "ATTEMPTS"}</span><strong>${escapeHtml(pairing.attempts[0]!.actionName)}</strong><p>${escapeHtml(pairing.attempts[0]!.purpose)}</p><small>SINCE T${pairing.attempts[0]!.startedTick.toLocaleString()} · ${pairing.attempts
+    ? `<div class="craft-attempt"><span>${pairing.attempts.length} LIVE ${pairing.attempts.length === 1 ? "ATTEMPT" : "ATTEMPTS"} · ${freshnessMarkup(nowTick, pairing.attempts[0]!.startedTick)}</span><strong>${escapeHtml(pairing.attempts[0]!.actionName)}</strong><p>${escapeHtml(pairing.attempts[0]!.purpose)}</p><small>SINCE T${pairing.attempts[0]!.startedTick.toLocaleString()} · ${pairing.attempts
         .slice(0, 3)
         .map((attempt) => escapeHtml(attempt.agentId))
         .join(
@@ -262,6 +277,22 @@ function craftPairingMarkup(pairing: CraftTreePairing, agentCount: number): stri
   </section>`;
 }
 
+function renderRecentArtifacts(snapshot: PublicWorldSnapshot): void {
+  const artifacts = [...snapshot.artifacts].sort((a, b) => b.builtAt - a.builtAt).slice(0, 8);
+  recentArtifactList.innerHTML =
+    artifacts
+      .map((artifact) => {
+        const age = formatTickAge(snapshot.tick, artifact.builtAt);
+        return `<article class="recent-artifact ${age.isNew ? "new" : ""}">
+          <header><strong>${escapeHtml(artifact.name)}</strong>${freshnessMarkup(snapshot.tick, artifact.builtAt)}</header>
+          <div>${materialChip(artifact.material)}<span>GEN ${artifact.generation}</span><span>${artifact.validated ? "VALIDATED" : "PROVISIONAL"}</span></div>
+          <p>${Math.round(artifact.performance * 100)}% PERFORMANCE · ${Math.round(artifact.health * 100)}% HEALTH</p>
+          <small>BUILT T${artifact.builtAt.toLocaleString()} · ${escapeHtml(artifact.creatorId)} · ${artifact.uses.toLocaleString()} USES</small>
+        </article>`;
+      })
+      .join("") || '<p class="craft-empty">NO PHYSICAL ARTIFACTS YET</p>';
+}
+
 function renderCraftTree(snapshot: PublicWorldSnapshot): void {
   const tree = buildCraftTree(snapshot);
   metric("craft-tree-tick", `TICK ${snapshot.tick.toLocaleString()}`);
@@ -269,13 +300,14 @@ function renderCraftTree(snapshot: PublicWorldSnapshot): void {
   metric("craft-tree-discovered", `${tree.discoveredPairings} / ${tree.pairings.length}`);
   metric("craft-tree-actions", String(tree.discoveredActions));
   metric("craft-tree-attempts", String(tree.activeAttempts));
+  renderRecentArtifacts(snapshot);
   craftTreeGrid.innerHTML = craftMaterials
     .map((material, index) => {
       const pairings = tree.pairings.filter((pairing) => pairing.ingredients[0] === material);
       const discovered = pairings.filter((pairing) => pairing.actions.length > 0).length;
       return `<section class="craft-branch">
         <header><span>0${index + 1}</span>${materialChip(material)}<small>${discovered} / ${pairings.length} DISCOVERED</small></header>
-        <div>${pairings.map((pairing) => craftPairingMarkup(pairing, snapshot.agents.length)).join("")}</div>
+        <div>${pairings.map((pairing) => craftPairingMarkup(pairing, snapshot.agents.length, snapshot.tick)).join("")}</div>
       </section>`;
     })
     .join("");
@@ -356,7 +388,7 @@ function renderAgentInspector(snapshot: PublicWorldSnapshot): void {
     ${
       agent.craftingTarget
         ? `<div class="agent-directive crafting-commitment">
-      <span>${agent.craftingTarget.mode === "creative" ? "CREATIVE SESSION" : "CRAFTING COMMITMENT"} · SINCE T${agent.craftingTarget.startedTick}</span>
+      <span>${agent.craftingTarget.mode === "creative" ? "CREATIVE SESSION" : "CRAFTING COMMITMENT"} · ${freshnessMarkup(snapshot.tick, agent.craftingTarget.startedTick)} · SINCE T${agent.craftingTarget.startedTick}</span>
       <strong>${escapeHtml(agent.craftingTarget.ingredients.join(" + ").toUpperCase())} → ${escapeHtml(agent.craftingTarget.actionName.toUpperCase())}</strong>
       <p>${escapeHtml(agent.craftingTarget.purpose)}</p>
       <small>RESERVED MATERIALS STAY PURPOSE-BOUND UNTIL BUILT</small>
@@ -370,7 +402,7 @@ function renderAgentInspector(snapshot: PublicWorldSnapshot): void {
       <small>${escapeHtml(agent.directive.controllerAction.toUpperCase())}${agent.directive.model ? ` · ${escapeHtml(agent.directive.model)}` : ""}</small>
     </div>
     <div class="agent-directive agent-program">
-      <span>ACTION SANDBOX · SCRIPT R${agent.script.revision} · T${agent.script.updatedTick}</span>
+      <span>ACTION SANDBOX · SCRIPT R${agent.script.revision} · T${agent.script.updatedTick}${action && action.createdTick > 0 ? ` · ${freshnessMarkup(snapshot.tick, action.createdTick)}` : ""}</span>
       <strong>${escapeHtml(agent.script.icon)} ${escapeHtml(action?.name.toUpperCase() ?? agent.script.actionId.toUpperCase())}</strong>
       <p>${escapeHtml(action?.algorithm ?? agent.script.rationale)}</p>
       <small>${escapeHtml(agent.script.program.join(" → "))}<br>${escapeHtml(agent.script.lastResult)}</small>
@@ -434,7 +466,7 @@ function renderChrome(snapshot: PublicWorldSnapshot): void {
   eventList.innerHTML =
     snapshot.events
       .slice(0, 5)
-      .map((event, index) => eventMarkup(event, index === 0))
+      .map((event, index) => eventMarkup(event, index === 0, snapshot.tick))
       .join("") || '<p class="quiet">The first agents are mapping the planet…</p>';
   const assisted = snapshot.engine.mode === "openrouter-assisted";
   engineStatus.classList.toggle("assisted", assisted);
