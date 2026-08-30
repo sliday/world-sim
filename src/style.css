@@ -607,6 +607,16 @@ a:focus-visible {
   color: var(--acid);
 }
 
+.panel-kicker-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.trace-toggle {
+  display: none;
+}
+
 .event-list {
   min-height: 150px;
 }
@@ -1084,15 +1094,102 @@ a:focus-visible {
 
   .event-panel {
     right: 10px;
-    bottom: 106px;
+    bottom: max(106px, calc(env(safe-area-inset-bottom) + 106px));
+    width: min(225px, calc(100vw - 20px));
+    height: 44px;
+    max-height: 44px;
+    overflow: hidden;
+  }
+
+  .event-panel.trace-expanded {
+    bottom: max(10px, env(safe-area-inset-bottom));
     width: calc(100vw - 20px);
+    height: auto;
+    max-height: min(58dvh, 480px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .event-panel:not(.trace-expanded) .world-diary,
+  .event-panel:not(.trace-expanded) .event-list {
+    display: none;
+  }
+
+  .event-panel .panel-kicker {
+    position: sticky;
+    z-index: 1;
+    top: 0;
+    min-height: 44px;
+    align-items: center;
+    padding: 0 0 0 12px;
+    background: rgba(12, 27, 28, 0.96);
+  }
+
+  .event-panel .panel-kicker-meta {
+    align-self: stretch;
+    gap: 5px;
+  }
+
+  .trace-toggle {
+    display: inline-grid;
+    min-width: 54px;
+    height: 44px;
+    padding: 0 9px;
+    place-items: center;
+    color: var(--cream);
+    border: 0;
+    border-left: 1px solid rgba(242, 237, 207, 0.18);
+    background: rgba(242, 237, 207, 0.06);
+    font-size: 8px;
+    letter-spacing: 0.1em;
+  }
+
+  .trace-toggle:focus-visible {
+    color: var(--ink);
+    background: var(--acid);
+    outline-offset: -3px;
+  }
+
+  .trace-open .metrics {
+    visibility: hidden;
   }
 
   .agent-inspector {
     right: 10px;
-    bottom: 106px;
+    bottom: max(106px, calc(env(safe-area-inset-bottom) + 106px));
     width: calc(100vw - 20px);
-    max-height: calc(100vh - 178px);
+    max-height: calc(100dvh - 178px);
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .agent-selected .agent-inspector {
+    right: 10px;
+    bottom: max(10px, env(safe-area-inset-bottom));
+    width: calc(100vw - 20px);
+    max-height: min(68dvh, 580px);
+  }
+
+  .agent-inspector-head {
+    position: sticky;
+    z-index: 2;
+    top: 0;
+    min-height: 64px;
+    padding: 8px 9px;
+    background: rgba(12, 27, 28, 0.96);
+    backdrop-filter: blur(12px) saturate(120%);
+  }
+
+  .agent-portrait {
+    width: 48px;
+    height: 48px;
+    flex-basis: 48px;
+  }
+
+  .agent-inspector .icon-button {
+    width: 44px;
+    height: 44px;
   }
 
   .metrics {

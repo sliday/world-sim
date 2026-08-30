@@ -66,7 +66,7 @@ app.innerHTML = `
     </div>
 
     <section class="event-panel glass-panel" aria-label="Events in the world">
-      <div class="panel-kicker"><span>LIVE TRACE</span><span id="tick-label">TICK 0</span></div>
+      <div class="panel-kicker"><span>LIVE TRACE</span><div class="panel-kicker-meta"><span id="tick-label">TICK 0</span><button id="trace-toggle" class="trace-toggle" type="button" aria-expanded="true" aria-label="Collapse live trace">CLOSE</button></div></div>
       <div id="world-diary" class="world-diary"></div>
       <div id="event-list" class="event-list" aria-live="polite"></div>
     </section>
@@ -142,12 +142,29 @@ const eventList = document.querySelector<HTMLElement>("#event-list")!;
 const worldDiary = document.querySelector<HTMLElement>("#world-diary")!;
 const engineStatus = document.querySelector<HTMLElement>("#engine-status")!;
 const worldShell = document.querySelector<HTMLElement>(".world-shell")!;
+const eventPanel = document.querySelector<HTMLElement>(".event-panel")!;
+const traceToggle = document.querySelector<HTMLButtonElement>("#trace-toggle")!;
 const agentInspector = document.querySelector<HTMLElement>("#agent-inspector")!;
 const agentInspectorContent = document.querySelector<HTMLElement>("#agent-inspector-content")!;
 let selectedAgentId: string | null = null;
 let latestSnapshot = client.snapshot;
 const longMemory = new Map<string, AgentLongMemory>();
 const renderer = createWorldSketch(canvasHost, client.snapshot, selectAgent);
+const mobileTrace = window.matchMedia("(max-width: 600px)");
+
+function setTraceExpanded(expanded: boolean): void {
+  eventPanel.classList.toggle("trace-expanded", expanded);
+  worldShell.classList.toggle("trace-open", expanded && mobileTrace.matches);
+  traceToggle.setAttribute("aria-expanded", String(expanded));
+  traceToggle.setAttribute("aria-label", expanded ? "Collapse live trace" : "Expand live trace");
+  traceToggle.textContent = expanded ? "CLOSE" : "OPEN";
+}
+
+setTraceExpanded(!mobileTrace.matches);
+mobileTrace.addEventListener("change", (event) => setTraceExpanded(!event.matches));
+traceToggle.addEventListener("click", () =>
+  setTraceExpanded(!eventPanel.classList.contains("trace-expanded")),
+);
 
 function metric(id: string, value: string): void {
   const element = document.querySelector<HTMLElement>(`#${id}`);
@@ -311,6 +328,7 @@ function selectAgent(agentId: string | null): void {
   worldShell.classList.toggle("agent-selected", selected);
   agentInspector.setAttribute("aria-hidden", String(!selected));
   if (selected) {
+    if (mobileTrace.matches) setTraceExpanded(false);
     renderAgentInspector(latestSnapshot);
     void loadLongMemory(agentId);
   }
