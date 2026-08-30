@@ -1,5 +1,6 @@
 import "@hackernoon/pixel-icon-library/fonts/iconfont.css";
 import { botPortraitSvg } from "./sim/bot-appearance";
+import { buildCraftTree, craftMaterials, type CraftTreePairing } from "./sim/craft-tree";
 import "./style.css";
 import { WorldClient } from "./sim/client";
 import { createWorldSketch } from "./sim/renderer";
@@ -62,6 +63,7 @@ app.innerHTML = `
 
     <div class="top-actions">
       <span id="engine-status" class="engine-status"><b></b> CONNECTING</span>
+      <button id="craft-tree-button" class="pixel-button" type="button"><i class="hn hn-code-block"></i> CRAFT TREE</button>
       <button id="about-button" class="pixel-button" type="button"><i class="hn hn-info-circle"></i> ABOUT</button>
     </div>
 
@@ -94,6 +96,26 @@ app.innerHTML = `
 
     <div class="observer-hint"><i class="hn hn-eye"></i> TAP AN AGENT FOR STATS · DRAG TO ROAM · SCROLL TO ZOOM</div>
   </main>
+
+  <section id="craft-tree-page" class="craft-tree-page" aria-hidden="true">
+    <nav class="craft-tree-nav">
+      <div class="wordmark"><span class="sigil" aria-hidden="true"><i></i><i></i><i></i></span><span>STIGMERGY</span></div>
+      <div><span id="craft-tree-tick">TICK 0</span><button id="craft-tree-close" class="pixel-button dark" type="button"><i class="hn hn-times"></i> RETURN TO WORLD</button></div>
+    </nav>
+    <article class="craft-tree-content">
+      <header class="craft-tree-hero">
+        <div><p class="eyebrow">WORLD KNOWLEDGE · READ ONLY</p><h1>THE FULL<br><em>CRAFT TREE</em></h1><p>Every two-material pairing is a branch. A behavior appears only after agents gather both ingredients, spend them, and the bounded action survives validation.</p></div>
+        <dl class="craft-tree-summary">
+          <div><dt>PAIRINGS</dt><dd id="craft-tree-pairings">15</dd></div>
+          <div><dt>DISCOVERED</dt><dd id="craft-tree-discovered">0 / 15</dd></div>
+          <div><dt>BEHAVIORS</dt><dd id="craft-tree-actions">0</dd></div>
+          <div><dt>LIVE ATTEMPTS</dt><dd id="craft-tree-attempts">0</dd></div>
+        </dl>
+      </header>
+      <div class="craft-tree-legend" aria-label="Craft tree status legend"><span><i class="discovered"></i> DISCOVERED</span><span><i class="active"></i> IN PROGRESS</span><span><i></i> NO DURABLE BEHAVIOR</span></div>
+      <div id="craft-tree-grid" class="craft-tree-grid" aria-live="polite"></div>
+    </article>
+  </section>
 
   <section id="about-page" class="about-page" aria-hidden="true">
     <nav class="about-nav">
@@ -142,6 +164,8 @@ const eventList = document.querySelector<HTMLElement>("#event-list")!;
 const worldDiary = document.querySelector<HTMLElement>("#world-diary")!;
 const engineStatus = document.querySelector<HTMLElement>("#engine-status")!;
 const worldShell = document.querySelector<HTMLElement>(".world-shell")!;
+const craftTreePage = document.querySelector<HTMLElement>("#craft-tree-page")!;
+const craftTreeGrid = document.querySelector<HTMLElement>("#craft-tree-grid")!;
 const eventPanel = document.querySelector<HTMLElement>(".event-panel")!;
 const traceToggle = document.querySelector<HTMLButtonElement>("#trace-toggle")!;
 const agentInspector = document.querySelector<HTMLElement>("#agent-inspector")!;
@@ -202,6 +226,59 @@ function escapeHtml(value: string): string {
   const element = document.createElement("span");
   element.textContent = value;
   return element.innerHTML;
+}
+
+function materialChip(material: MaterialKind): string {
+  const visual = materialVisual[material];
+  return `<span class="craft-material ${material}"><i class="hn ${visual.icon}"></i><b>${visual.rune}</b>${escapeHtml(material.toUpperCase())}</span>`;
+}
+
+function craftPairingMarkup(pairing: CraftTreePairing, agentCount: number): string {
+  const discovered = pairing.actions.length > 0;
+  const active = pairing.attempts.length > 0;
+  const state = active ? "IN PROGRESS" : discovered ? "DISCOVERED" : "NO DISCOVERY";
+  const actions = pairing.actions
+    .map(
+      ({ definition, knownBy }) => `<article class="craft-action">
+        <div><strong>${escapeHtml(definition.icon)} ${escapeHtml(definition.name)}</strong><span>KNOWN BY ${knownBy} / ${agentCount}</span></div>
+        <p>${escapeHtml(definition.algorithm)}</p>
+        <code>${escapeHtml(definition.program.join(" → "))}</code>
+        <small>BUILT T${definition.createdTick.toLocaleString()} · ${escapeHtml(definition.authorId)} · ${definition.uses.toLocaleString()} USES</small>
+      </article>`,
+    )
+    .join("");
+  const attempts = pairing.attempts.length
+    ? `<div class="craft-attempt"><span>${pairing.attempts.length} LIVE ${pairing.attempts.length === 1 ? "ATTEMPT" : "ATTEMPTS"}</span><strong>${escapeHtml(pairing.attempts[0]!.actionName)}</strong><p>${escapeHtml(pairing.attempts[0]!.purpose)}</p><small>SINCE T${pairing.attempts[0]!.startedTick.toLocaleString()} · ${pairing.attempts
+        .slice(0, 3)
+        .map((attempt) => escapeHtml(attempt.agentId))
+        .join(
+          " · ",
+        )}${pairing.attempts.length > 3 ? ` · +${pairing.attempts.length - 3}` : ""}</small></div>`
+    : "";
+  return `<section class="craft-pairing ${discovered ? "discovered" : ""} ${active ? "active" : ""}">
+    <header><div>${materialChip(pairing.ingredients[0])}<i>+</i>${materialChip(pairing.ingredients[1])}</div><span>${state}</span></header>
+    ${actions || '<p class="craft-empty">NO DURABLE BEHAVIOR RECORDED</p>'}
+    ${attempts}
+  </section>`;
+}
+
+function renderCraftTree(snapshot: PublicWorldSnapshot): void {
+  const tree = buildCraftTree(snapshot);
+  metric("craft-tree-tick", `TICK ${snapshot.tick.toLocaleString()}`);
+  metric("craft-tree-pairings", String(tree.pairings.length));
+  metric("craft-tree-discovered", `${tree.discoveredPairings} / ${tree.pairings.length}`);
+  metric("craft-tree-actions", String(tree.discoveredActions));
+  metric("craft-tree-attempts", String(tree.activeAttempts));
+  craftTreeGrid.innerHTML = craftMaterials
+    .map((material, index) => {
+      const pairings = tree.pairings.filter((pairing) => pairing.ingredients[0] === material);
+      const discovered = pairings.filter((pairing) => pairing.actions.length > 0).length;
+      return `<section class="craft-branch">
+        <header><span>0${index + 1}</span>${materialChip(material)}<small>${discovered} / ${pairings.length} DISCOVERED</small></header>
+        <div>${pairings.map((pairing) => craftPairingMarkup(pairing, snapshot.agents.length)).join("")}</div>
+      </section>`;
+    })
+    .join("");
 }
 
 function inventoryMarkup(agent: Agent): string {
@@ -338,6 +415,7 @@ function renderChrome(snapshot: PublicWorldSnapshot): void {
   latestSnapshot = snapshot;
   renderer.update(snapshot);
   renderAgentInspector(snapshot);
+  if (craftTreePage.classList.contains("visible")) renderCraftTree(snapshot);
   metric("metric-agents", String(snapshot.metrics.activeAgents));
   metric("metric-artifacts", String(snapshot.metrics.artifacts));
   metric(
@@ -364,23 +442,47 @@ function renderChrome(snapshot: PublicWorldSnapshot): void {
 }
 
 function showAbout(show: boolean, updateHistory = true): void {
-  if (show) selectAgent(null);
+  if (show) {
+    selectAgent(null);
+    showCraftTree(false, false);
+  }
   aboutPage.classList.toggle("visible", show);
   aboutPage.setAttribute("aria-hidden", String(!show));
   document.body.classList.toggle("about-open", show);
   if (updateHistory) history.pushState({ about: show }, "", show ? "/about" : "/");
 }
 
+function showCraftTree(show: boolean, updateHistory = true): void {
+  if (show) {
+    selectAgent(null);
+    showAbout(false, false);
+    renderCraftTree(latestSnapshot);
+    craftTreePage.scrollTop = 0;
+  }
+  craftTreePage.classList.toggle("visible", show);
+  craftTreePage.setAttribute("aria-hidden", String(!show));
+  document.body.classList.toggle("craft-tree-open", show);
+  if (updateHistory) history.pushState({ craftTree: show }, "", show ? "/craft-tree" : "/");
+}
+
+function syncPageFromLocation(): void {
+  showAbout(location.pathname === "/about", false);
+  showCraftTree(location.pathname === "/craft-tree", false);
+}
+
 document.querySelector("#about-button")?.addEventListener("click", () => showAbout(true));
 document.querySelector("#about-close")?.addEventListener("click", () => showAbout(false));
+document.querySelector("#craft-tree-button")?.addEventListener("click", () => showCraftTree(true));
+document.querySelector("#craft-tree-close")?.addEventListener("click", () => showCraftTree(false));
 document
   .querySelector("#agent-inspector-close")
   ?.addEventListener("click", () => selectAgent(null));
-window.addEventListener("popstate", () => showAbout(location.pathname === "/about", false));
+window.addEventListener("popstate", syncPageFromLocation);
 window.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
   if (selectedAgentId) selectAgent(null);
   else if (aboutPage.classList.contains("visible")) showAbout(false);
+  else if (craftTreePage.classList.contains("visible")) showCraftTree(false);
 });
 window.addEventListener("beforeunload", () => {
   client.dispose();
@@ -389,4 +491,4 @@ window.addEventListener("beforeunload", () => {
 
 client.subscribe(renderChrome);
 void client.connect();
-if (location.pathname === "/about") showAbout(true, false);
+syncPageFromLocation();
