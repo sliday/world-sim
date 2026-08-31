@@ -453,7 +453,7 @@ function renderCraftGraph(
   }
   const selectedExists = selectedCraftGraphNodeId ? nodesById.has(selectedCraftGraphNodeId) : false;
   const defaultNode =
-    graph.nodes.filter((node) => node.kind === "action").at(-1)?.id ??
+    graph.nodes.find((node) => node.kind === "action")?.id ??
     graph.nodes.find((node) => node.kind === "pairing")?.id;
   if (selectedExists && selectedCraftGraphNodeId)
     showCraftGraphDetail(selectedCraftGraphNodeId, tree, snapshot);
