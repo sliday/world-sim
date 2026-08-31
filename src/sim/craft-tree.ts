@@ -113,7 +113,7 @@ export function buildCraftTree(
     );
     pairing.attempts.sort(
       (first, second) =>
-        first.startedTick - second.startedTick || first.agentId.localeCompare(second.agentId),
+        second.startedTick - first.startedTick || first.agentId.localeCompare(second.agentId),
     );
   }
 

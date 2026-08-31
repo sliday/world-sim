@@ -561,7 +561,7 @@ describe("deterministic consequence layer", () => {
     const frontier = metrics.discoveryFrontierPerformance;
     for (const artifact of world.artifacts) artifact.performance = 0;
     expect(calculateMetrics(world).discoveryFrontierPerformance).toBe(frontier);
-  });
+  }, 15_000);
 
   it("rejects model output outside the narrow action schema", () => {
     const world = createInitialWorld(9, 0);

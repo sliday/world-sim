@@ -2,7 +2,7 @@ import "@hackernoon/pixel-icon-library/fonts/iconfont.css";
 import { botPortraitSvg } from "./sim/bot-appearance";
 import { buildCraftTree, craftMaterials, type CraftTreePairing } from "./sim/craft-tree";
 import "./style.css";
-import { WorldClient } from "./sim/client";
+import { WorldClient, type WorldClientStatus } from "./sim/client";
 import { createWorldSketch } from "./sim/renderer";
 import { formatTickAge } from "./sim/tick-age";
 import type {
@@ -98,14 +98,17 @@ app.innerHTML = `
     <div class="observer-hint"><i class="hn hn-eye"></i> TAP AN AGENT FOR STATS · DRAG TO ROAM · SCROLL TO ZOOM</div>
   </main>
 
-  <section id="craft-tree-page" class="craft-tree-page" aria-hidden="true">
+  <section id="craft-tree-page" class="craft-tree-page" aria-hidden="true" inert>
     <nav class="craft-tree-nav">
       <div class="wordmark"><span class="sigil" aria-hidden="true"><i></i><i></i><i></i></span><span>STIGMERGY</span></div>
       <div><span id="craft-tree-tick">TICK 0</span><button id="craft-tree-close" class="pixel-button dark" type="button"><i class="hn hn-times"></i> RETURN TO WORLD</button></div>
     </nav>
-    <article class="craft-tree-content">
+    <section id="craft-tree-state" class="craft-tree-state" role="status" aria-live="polite">
+      <i class="hn hn-spinner"></i><strong id="craft-tree-state-title">LOADING AUTHORITATIVE WORLD…</strong><p id="craft-tree-state-copy">The Craft Tree will appear after the persistent world responds.</p><button id="craft-tree-retry" class="pixel-button" type="button" hidden>RETRY CONNECTION</button>
+    </section>
+    <article id="craft-tree-content" class="craft-tree-content" hidden>
       <header class="craft-tree-hero">
-        <div><p class="eyebrow">WORLD KNOWLEDGE · READ ONLY</p><h1>THE FULL<br><em>CRAFT TREE</em></h1><p>Every two-material pairing is a branch. A behavior appears only after agents gather both ingredients, spend them, and the bounded action survives validation.</p></div>
+        <div><p class="eyebrow">WORLD KNOWLEDGE · READ ONLY</p><h1 id="craft-tree-heading" tabindex="-1">THE FULL<br><em>CRAFT TREE</em></h1><p>Every two-material pairing is a branch. A behavior appears only after agents gather both ingredients, spend them, and the bounded action survives validation.</p></div>
         <dl class="craft-tree-summary">
           <div><dt>PAIRINGS</dt><dd id="craft-tree-pairings">15</dd></div>
           <div><dt>DISCOVERED</dt><dd id="craft-tree-discovered">0 / 15</dd></div>
@@ -118,11 +121,12 @@ app.innerHTML = `
         <header><div><span>RECENT PHYSICAL OUTPUTS</span><strong>ARTIFACTS</strong></div><small>NEWEST 8 · AUTHORITATIVE WORLD AGE</small></header>
         <div id="recent-artifact-list" class="recent-artifact-list"></div>
       </section>
-      <div id="craft-tree-grid" class="craft-tree-grid" aria-live="polite"></div>
+      <p id="craft-tree-announcement" class="sr-only" aria-live="polite"></p>
+      <div id="craft-tree-grid" class="craft-tree-grid"></div>
     </article>
   </section>
 
-  <section id="about-page" class="about-page" aria-hidden="true">
+  <section id="about-page" class="about-page" aria-hidden="true" inert>
     <nav class="about-nav">
       <div class="wordmark"><span class="sigil" aria-hidden="true"><i></i><i></i><i></i></span><span>STIGMERGY</span></div>
       <button id="about-close" class="pixel-button dark" type="button"><i class="hn hn-times"></i> RETURN TO WORLD</button>
@@ -170,14 +174,28 @@ const worldDiary = document.querySelector<HTMLElement>("#world-diary")!;
 const engineStatus = document.querySelector<HTMLElement>("#engine-status")!;
 const worldShell = document.querySelector<HTMLElement>(".world-shell")!;
 const craftTreePage = document.querySelector<HTMLElement>("#craft-tree-page")!;
+const craftTreeContent = document.querySelector<HTMLElement>("#craft-tree-content")!;
+const craftTreeState = document.querySelector<HTMLElement>("#craft-tree-state")!;
+const craftTreeStateTitle = document.querySelector<HTMLElement>("#craft-tree-state-title")!;
+const craftTreeStateCopy = document.querySelector<HTMLElement>("#craft-tree-state-copy")!;
 const craftTreeGrid = document.querySelector<HTMLElement>("#craft-tree-grid")!;
+const craftTreeAnnouncement = document.querySelector<HTMLElement>("#craft-tree-announcement")!;
+const craftTreeRetry = document.querySelector<HTMLButtonElement>("#craft-tree-retry")!;
 const recentArtifactList = document.querySelector<HTMLElement>("#recent-artifact-list")!;
 const eventPanel = document.querySelector<HTMLElement>(".event-panel")!;
 const traceToggle = document.querySelector<HTMLButtonElement>("#trace-toggle")!;
+const craftTreeButton = document.querySelector<HTMLButtonElement>("#craft-tree-button")!;
+const craftTreeClose = document.querySelector<HTMLButtonElement>("#craft-tree-close")!;
+const aboutButton = document.querySelector<HTMLButtonElement>("#about-button")!;
+const aboutClose = document.querySelector<HTMLButtonElement>("#about-close")!;
 const agentInspector = document.querySelector<HTMLElement>("#agent-inspector")!;
 const agentInspectorContent = document.querySelector<HTMLElement>("#agent-inspector-content")!;
 let selectedAgentId: string | null = null;
 let latestSnapshot = client.snapshot;
+let latestClientStatus: WorldClientStatus = client.status;
+let craftProjectionKey = "";
+let announcedDiscoveredPairings = -1;
+let craftTreeReturnFocus: HTMLElement = craftTreeButton;
 const longMemory = new Map<string, AgentLongMemory>();
 const renderer = createWorldSketch(canvasHost, client.snapshot, selectAgent);
 const mobileTrace = window.matchMedia("(max-width: 600px)");
@@ -251,7 +269,11 @@ function craftPairingMarkup(
 ): string {
   const discovered = pairing.actions.length > 0;
   const active = pairing.attempts.length > 0;
-  const state = active ? "IN PROGRESS" : discovered ? "DISCOVERED" : "NO DISCOVERY";
+  const state = active
+    ? `${pairing.attempts.length} IN PROGRESS`
+    : discovered
+      ? "DISCOVERED"
+      : "NO DISCOVERY";
   const actions = pairing.actions
     .map(
       ({ definition, knownBy }) => `<article class="craft-action">
@@ -262,14 +284,12 @@ function craftPairingMarkup(
       </article>`,
     )
     .join("");
-  const attempts = pairing.attempts.length
-    ? `<div class="craft-attempt"><span>${pairing.attempts.length} LIVE ${pairing.attempts.length === 1 ? "ATTEMPT" : "ATTEMPTS"} · ${freshnessMarkup(nowTick, pairing.attempts[0]!.startedTick)}</span><strong>${escapeHtml(pairing.attempts[0]!.actionName)}</strong><p>${escapeHtml(pairing.attempts[0]!.purpose)}</p><small>SINCE T${pairing.attempts[0]!.startedTick.toLocaleString()} · ${pairing.attempts
-        .slice(0, 3)
-        .map((attempt) => escapeHtml(attempt.agentId))
-        .join(
-          " · ",
-        )}${pairing.attempts.length > 3 ? ` · +${pairing.attempts.length - 3}` : ""}</small></div>`
-    : "";
+  const attempts = pairing.attempts
+    .map(
+      (attempt) =>
+        `<div class="craft-attempt"><span>${attempt.mode === "creative" ? "CREATIVE SESSION" : "KNOWN CRAFT"} · ${freshnessMarkup(nowTick, attempt.startedTick)}</span><strong>${escapeHtml(attempt.actionName)}</strong><p>${escapeHtml(attempt.purpose)}</p><small>SINCE T${attempt.startedTick.toLocaleString()} · ${escapeHtml(attempt.agentId)}</small></div>`,
+    )
+    .join("");
   return `<section class="craft-pairing ${discovered ? "discovered" : ""} ${active ? "active" : ""}">
     <header><div>${materialChip(pairing.ingredients[0])}<i>+</i>${materialChip(pairing.ingredients[1])}</div><span>${state}</span></header>
     ${actions || '<p class="craft-empty">NO DURABLE BEHAVIOR RECORDED</p>'}
@@ -293,9 +313,48 @@ function renderRecentArtifacts(snapshot: PublicWorldSnapshot): void {
       .join("") || '<p class="craft-empty">NO PHYSICAL ARTIFACTS YET</p>';
 }
 
+function craftTreeProjectionSignature(
+  snapshot: PublicWorldSnapshot,
+  tree: ReturnType<typeof buildCraftTree>,
+): string {
+  const artifacts = [...snapshot.artifacts]
+    .sort((a, b) => b.builtAt - a.builtAt)
+    .slice(0, 8)
+    .map((artifact) => [
+      artifact.id,
+      artifact.uses,
+      artifact.validated,
+      formatTickAge(snapshot.tick, artifact.builtAt).label,
+    ]);
+  return JSON.stringify({
+    agents: snapshot.agents.length,
+    pairings: tree.pairings.map((pairing) => [
+      pairing.id,
+      pairing.actions.map(({ definition, knownBy }) => [
+        definition.id,
+        definition.uses,
+        knownBy,
+        formatTickAge(snapshot.tick, definition.createdTick).label,
+      ]),
+      pairing.attempts.map((attempt) => [
+        attempt.agentId,
+        attempt.mode,
+        attempt.actionName,
+        attempt.purpose,
+        attempt.startedTick,
+        formatTickAge(snapshot.tick, attempt.startedTick).label,
+      ]),
+    ]),
+    artifacts,
+  });
+}
+
 function renderCraftTree(snapshot: PublicWorldSnapshot): void {
   const tree = buildCraftTree(snapshot);
   metric("craft-tree-tick", `TICK ${snapshot.tick.toLocaleString()}`);
+  const projectionKey = craftTreeProjectionSignature(snapshot, tree);
+  if (projectionKey === craftProjectionKey) return;
+  craftProjectionKey = projectionKey;
   metric("craft-tree-pairings", String(tree.pairings.length));
   metric("craft-tree-discovered", `${tree.discoveredPairings} / ${tree.pairings.length}`);
   metric("craft-tree-actions", String(tree.discoveredActions));
@@ -311,6 +370,35 @@ function renderCraftTree(snapshot: PublicWorldSnapshot): void {
       </section>`;
     })
     .join("");
+  if (announcedDiscoveredPairings !== tree.discoveredPairings) {
+    craftTreeAnnouncement.textContent = `${tree.discoveredPairings} of ${tree.pairings.length} pairings discovered.`;
+    announcedDiscoveredPairings = tree.discoveredPairings;
+  }
+}
+
+function renderCraftTreeStatus(status: WorldClientStatus): void {
+  latestClientStatus = status;
+  const usableSnapshot = status === "authoritative" || status === "stale";
+  craftTreeContent.hidden = !usableSnapshot;
+  craftTreeState.hidden = status === "authoritative";
+  craftTreeState.classList.toggle("compact", status === "stale");
+  craftTreeRetry.hidden = status !== "fallback";
+  if (status === "loading") {
+    craftTreeStateTitle.textContent = "LOADING AUTHORITATIVE WORLD…";
+    craftTreeStateCopy.textContent =
+      "The Craft Tree will appear after the persistent world responds.";
+  } else if (status === "fallback") {
+    craftTreeStateTitle.textContent = "AUTHORITATIVE WORLD UNAVAILABLE";
+    craftTreeStateCopy.textContent =
+      "A local fallback simulation is running, but it is not shown as persistent world knowledge.";
+  } else if (status === "stale") {
+    craftTreeStateTitle.textContent = "SHOWING LAST AUTHORITATIVE SNAPSHOT";
+    craftTreeStateCopy.textContent = "Live updates are interrupted. Reconnecting automatically…";
+  }
+  if (craftTreePage.classList.contains("visible") && usableSnapshot) {
+    craftProjectionKey = "";
+    renderCraftTree(latestSnapshot);
+  }
 }
 
 function inventoryMarkup(agent: Agent): string {
@@ -447,7 +535,11 @@ function renderChrome(snapshot: PublicWorldSnapshot): void {
   latestSnapshot = snapshot;
   renderer.update(snapshot);
   renderAgentInspector(snapshot);
-  if (craftTreePage.classList.contains("visible")) renderCraftTree(snapshot);
+  if (
+    craftTreePage.classList.contains("visible") &&
+    (latestClientStatus === "authoritative" || latestClientStatus === "stale")
+  )
+    renderCraftTree(snapshot);
   metric("metric-agents", String(snapshot.metrics.activeAgents));
   metric("metric-artifacts", String(snapshot.metrics.artifacts));
   metric(
@@ -477,35 +569,82 @@ function showAbout(show: boolean, updateHistory = true): void {
   if (show) {
     selectAgent(null);
     showCraftTree(false, false);
+    worldShell.inert = true;
+    worldShell.setAttribute("aria-hidden", "true");
+    aboutPage.inert = false;
   }
   aboutPage.classList.toggle("visible", show);
   aboutPage.setAttribute("aria-hidden", String(!show));
   document.body.classList.toggle("about-open", show);
+  if (show) window.requestAnimationFrame(() => aboutClose.focus());
+  else {
+    aboutPage.inert = true;
+    if (!craftTreePage.classList.contains("visible")) {
+      worldShell.inert = false;
+      worldShell.removeAttribute("aria-hidden");
+    }
+  }
   if (updateHistory) history.pushState({ about: show }, "", show ? "/about" : "/");
 }
 
 function showCraftTree(show: boolean, updateHistory = true): void {
+  const wasVisible = craftTreePage.classList.contains("visible");
   if (show) {
+    if (
+      !wasVisible &&
+      document.activeElement instanceof HTMLElement &&
+      worldShell.contains(document.activeElement)
+    )
+      craftTreeReturnFocus = document.activeElement;
+    else if (!wasVisible) craftTreeReturnFocus = craftTreeButton;
     selectAgent(null);
     showAbout(false, false);
-    renderCraftTree(latestSnapshot);
     craftTreePage.scrollTop = 0;
+    worldShell.inert = true;
+    worldShell.setAttribute("aria-hidden", "true");
+    aboutPage.inert = true;
+    craftTreePage.inert = false;
   }
   craftTreePage.classList.toggle("visible", show);
   craftTreePage.setAttribute("aria-hidden", String(!show));
   document.body.classList.toggle("craft-tree-open", show);
+  if (show) {
+    renderCraftTreeStatus(latestClientStatus);
+    if (latestClientStatus === "authoritative" || latestClientStatus === "stale") {
+      craftProjectionKey = "";
+      renderCraftTree(latestSnapshot);
+    }
+    window.requestAnimationFrame(() => craftTreeClose.focus());
+  } else {
+    craftTreePage.inert = true;
+    worldShell.inert = false;
+    worldShell.removeAttribute("aria-hidden");
+    if (wasVisible) window.requestAnimationFrame(() => craftTreeReturnFocus.focus());
+  }
   if (updateHistory) history.pushState({ craftTree: show }, "", show ? "/craft-tree" : "/");
 }
 
 function syncPageFromLocation(): void {
-  showAbout(location.pathname === "/about", false);
-  showCraftTree(location.pathname === "/craft-tree", false);
+  if (location.pathname === "/craft-tree") {
+    showAbout(false, false);
+    showCraftTree(true, false);
+  } else if (location.pathname === "/about") {
+    showCraftTree(false, false);
+    showAbout(true, false);
+  } else {
+    showAbout(false, false);
+    showCraftTree(false, false);
+  }
 }
 
-document.querySelector("#about-button")?.addEventListener("click", () => showAbout(true));
-document.querySelector("#about-close")?.addEventListener("click", () => showAbout(false));
-document.querySelector("#craft-tree-button")?.addEventListener("click", () => showCraftTree(true));
-document.querySelector("#craft-tree-close")?.addEventListener("click", () => showCraftTree(false));
+aboutButton.addEventListener("click", () => showAbout(true));
+aboutClose.addEventListener("click", () => {
+  showAbout(false);
+  window.requestAnimationFrame(() => aboutButton.focus());
+});
+craftTreeButton.addEventListener("click", () => showCraftTree(true));
+craftTreeClose.addEventListener("click", () => showCraftTree(false));
+craftTreeRetry.addEventListener("click", () => void client.retry());
 document
   .querySelector("#agent-inspector-close")
   ?.addEventListener("click", () => selectAgent(null));
@@ -520,7 +659,11 @@ window.addEventListener("beforeunload", () => {
   client.dispose();
   renderer.remove();
 });
+window.addEventListener("load", () => {
+  if (craftTreePage.classList.contains("visible")) craftTreeClose.focus();
+});
 
 client.subscribe(renderChrome);
+client.subscribeStatus(renderCraftTreeStatus);
 void client.connect();
 syncPageFromLocation();

@@ -39,21 +39,36 @@ describe("craft tree", () => {
       purpose: "rebuild the shared compass",
       startedTick: 24,
     };
+    world.agents[3]!.craftingTarget = {
+      mode: "creative",
+      actionName: "Mineral Spore Signal",
+      ingredients: ["fungus", "mineral"],
+      purpose: "test a newer signaling behavior",
+      startedTick: 90,
+    };
 
     const tree = buildCraftTree(publicSnapshot(world, false));
     const pairing = tree.pairings.find((candidate) => candidate.id === "fungus+mineral");
 
     expect(tree.discoveredPairings).toBe(1);
     expect(tree.discoveredActions).toBe(1);
-    expect(tree.activeAttempts).toBe(1);
+    expect(tree.activeAttempts).toBe(2);
     expect(pairing?.actions[0]).toMatchObject({
       knownBy: 2,
       definition: { id: action.id, uses: 7 },
     });
     expect(pairing?.attempts[0]).toMatchObject({
+      agentId: world.agents[3]!.id,
+      actionName: "Mineral Spore Signal",
+      mode: "creative",
+      purpose: "test a newer signaling behavior",
+      startedTick: 90,
+    });
+    expect(pairing?.attempts[1]).toMatchObject({
       agentId: world.agents[2]!.id,
       actionName: action.name,
       mode: "craft",
+      startedTick: 24,
     });
   });
 });
