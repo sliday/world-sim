@@ -487,7 +487,7 @@ function drawSpeech(
       context.setLineDash([2, 3]);
       p.line(x, y - 6, targetX, targetY - 6);
       context.setLineDash([]);
-      p.textFont("Pixelify Sans");
+      p.textFont("Silkscreen");
       p.textSize(10);
       const width = Math.min(166, p.textWidth(message.text) + 16);
       const displayText = fitOverlayText(message.text, width - 12, (text) => p.textWidth(text));
@@ -669,7 +669,7 @@ function drawAgent(
   p.rect(-5, -5, 10, 10);
   p.noStroke();
   p.fill(modeColor[agent.mode]);
-  p.textFont("Pixelify Sans");
+  p.textFont("Silkscreen");
   p.textAlign(p.CENTER, p.CENTER);
   p.textSize(8);
   p.text(agent.icon, 0, 0.5);

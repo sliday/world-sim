@@ -74,5 +74,5 @@ The map borrows the method—not generated assets—from Stas Kulesh's `blouns/g
 - [SwarmWorld preprint](https://arxiv.org/abs/2608.26081)
 - [NullClaw](https://github.com/nullclaw/nullclaw) — MIT
 - [HackerNoon Pixel Icon Library](https://github.com/hackernoon/pixel-icon-library) — icons used unmodified under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
-- [Pixelify Sans](https://fonts.google.com/specimen/Pixelify+Sans) — SIL Open Font License 1.1
+- [Silkscreen](https://fonts.google.com/specimen/Silkscreen) — SIL Open Font License 1.1
 - [p5.js](https://p5js.org/)

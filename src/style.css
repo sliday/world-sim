@@ -1,7 +1,7 @@
-@import url("https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400..700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&display=swap");
 
 :root {
-  font-family: "Pixelify Sans", monospace;
+  font-family: "Silkscreen", monospace;
   color: #f2edcf;
   background: #102426;
   font-synthesis: none;
@@ -453,7 +453,7 @@ a:focus-visible {
   white-space: pre-wrap;
   color: rgba(242, 237, 207, 0.72);
   font:
-    10px/1.45 "Pixelify Sans",
+    10px/1.45 "Silkscreen",
     monospace;
 }
 
@@ -522,7 +522,7 @@ a:focus-visible {
   white-space: pre-wrap;
   color: rgba(242, 237, 207, 0.72);
   font:
-    10px/1.4 "Pixelify Sans",
+    10px/1.4 "Silkscreen",
     monospace;
 }
 
@@ -1275,7 +1275,7 @@ a:focus-visible {
   margin: 0 0 10px;
   overflow-wrap: anywhere;
   color: var(--aqua);
-  font-family: "Pixelify Sans", monospace;
+  font-family: "Silkscreen", monospace;
   font-size: 12px;
   line-height: 1.35;
 }
