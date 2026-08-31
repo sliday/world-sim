@@ -1,5 +1,6 @@
 import "@hackernoon/pixel-icon-library/fonts/iconfont.css";
 import { botPortraitSvg } from "./sim/bot-appearance";
+import { buildCraftGraphLayout, type CraftGraphNode } from "./sim/craft-graph";
 import { buildCraftTree, craftMaterials, type CraftTreePairing } from "./sim/craft-tree";
 import "./style.css";
 import { WorldClient, type WorldClientStatus } from "./sim/client";
@@ -117,12 +118,21 @@ app.innerHTML = `
         </dl>
       </header>
       <div class="craft-tree-legend" aria-label="Craft tree status legend"><span><i class="discovered"></i> DISCOVERED</span><span><i class="active"></i> IN PROGRESS</span><span><i></i> NO DURABLE BEHAVIOR</span><span class="freshness-key">[NEW] = LAST 5 MIN</span></div>
+      <section class="craft-graph-section" aria-labelledby="craft-graph-title">
+        <header><div><span>KNOWLEDGE GRAPH</span><strong id="craft-graph-title">MATERIALS → PAIRINGS → SKILLS</strong><small>DRAG TO PAN · USE + / − TO ZOOM · SELECT A NODE</small></div><div class="craft-graph-controls" aria-label="Graph zoom controls"><button id="craft-graph-zoom-out" type="button" aria-label="Zoom out">−</button><output id="craft-graph-zoom">100%</output><button id="craft-graph-zoom-in" type="button" aria-label="Zoom in">+</button><button id="craft-graph-fit" type="button">FIT</button></div></header>
+        <div class="craft-graph-shell">
+          <div id="craft-graph-viewport" class="craft-graph-viewport" tabindex="0" aria-label="Zoomable craft graph. Drag to pan, use the mouse wheel or controls to zoom, and select a node for details.">
+            <div id="craft-graph-stage" class="craft-graph-stage"></div>
+          </div>
+          <aside id="craft-graph-detail" class="craft-graph-detail" aria-live="polite"><span>SELECT A NODE</span><strong>TRACE THE WORLD’S KNOWLEDGE</strong><p>Materials combine into pairings. Successful physical experiments become bounded reusable skills.</p></aside>
+        </div>
+      </section>
       <section class="recent-artifacts">
         <header><div><span>RECENT PHYSICAL OUTPUTS</span><strong>ARTIFACTS</strong></div><small>NEWEST 8 · AUTHORITATIVE WORLD AGE</small></header>
         <div id="recent-artifact-list" class="recent-artifact-list"></div>
       </section>
       <p id="craft-tree-announcement" class="sr-only" aria-live="polite"></p>
-      <div id="craft-tree-grid" class="craft-tree-grid"></div>
+      <details class="craft-tree-index"><summary>OPEN TEXT INDEX · ALL 15 PAIRINGS</summary><div id="craft-tree-grid" class="craft-tree-grid"></div></details>
     </article>
   </section>
 
@@ -160,7 +170,7 @@ app.innerHTML = `
 
       <footer class="credits">
         <p>SIMULATION: P5.JS · EDGE STATE: CLOUDFLARE DURABLE OBJECTS · AGENT ROUTING: NULLCLAW EDGE POLICY + OPENROUTER/FREE</p>
-        <p>PIXEL ICONS BY <a href="https://github.com/hackernoon/pixel-icon-library" target="_blank" rel="noreferrer">HACKERNOON</a>, USED UNMODIFIED UNDER <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noreferrer">CC BY 4.0</a> · PIXELIFY SANS UNDER OFL 1.1</p>
+        <p>PIXEL ICONS BY <a href="https://github.com/hackernoon/pixel-icon-library" target="_blank" rel="noreferrer">HACKERNOON</a>, USED UNMODIFIED UNDER <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noreferrer">CC BY 4.0</a> · SILKSCREEN UNDER OFL 1.1</p>
       </footer>
     </article>
   </section>
@@ -178,6 +188,10 @@ const craftTreeContent = document.querySelector<HTMLElement>("#craft-tree-conten
 const craftTreeState = document.querySelector<HTMLElement>("#craft-tree-state")!;
 const craftTreeStateTitle = document.querySelector<HTMLElement>("#craft-tree-state-title")!;
 const craftTreeStateCopy = document.querySelector<HTMLElement>("#craft-tree-state-copy")!;
+const craftGraphViewport = document.querySelector<HTMLElement>("#craft-graph-viewport")!;
+const craftGraphStage = document.querySelector<HTMLElement>("#craft-graph-stage")!;
+const craftGraphDetail = document.querySelector<HTMLElement>("#craft-graph-detail")!;
+const craftGraphZoom = document.querySelector<HTMLOutputElement>("#craft-graph-zoom")!;
 const craftTreeGrid = document.querySelector<HTMLElement>("#craft-tree-grid")!;
 const craftTreeAnnouncement = document.querySelector<HTMLElement>("#craft-tree-announcement")!;
 const craftTreeRetry = document.querySelector<HTMLButtonElement>("#craft-tree-retry")!;
@@ -196,6 +210,15 @@ let latestClientStatus: WorldClientStatus = client.status;
 let craftProjectionKey = "";
 let announcedDiscoveredPairings = -1;
 let craftTreeReturnFocus: HTMLElement = craftTreeButton;
+let selectedCraftGraphNodeId: string | null = null;
+let craftGraphScale = 1;
+let craftGraphX = 18;
+let craftGraphY = 18;
+let craftGraphWidth = 1_120;
+let craftGraphHeight = 1_600;
+let craftGraphDragging = false;
+let craftGraphPointer = { x: 0, y: 0 };
+let craftGraphHasFitted = false;
 const longMemory = new Map<string, AgentLongMemory>();
 const renderer = createWorldSketch(canvasHost, client.snapshot, selectAgent);
 const mobileTrace = window.matchMedia("(max-width: 600px)");
@@ -297,6 +320,150 @@ function craftPairingMarkup(
   </section>`;
 }
 
+function applyCraftGraphTransform(): void {
+  craftGraphStage.style.transform = `translate(${craftGraphX}px, ${craftGraphY}px) scale(${craftGraphScale})`;
+  craftGraphZoom.value = `${Math.round(craftGraphScale * 100)}%`;
+}
+
+function setCraftGraphZoom(nextScale: number, anchorX?: number, anchorY?: number): void {
+  const scale = Math.max(0.24, Math.min(1.8, nextScale));
+  const x = anchorX ?? craftGraphViewport.clientWidth / 2;
+  const y = anchorY ?? craftGraphViewport.clientHeight / 2;
+  const worldX = (x - craftGraphX) / craftGraphScale;
+  const worldY = (y - craftGraphY) / craftGraphScale;
+  craftGraphX = x - worldX * scale;
+  craftGraphY = y - worldY * scale;
+  craftGraphScale = scale;
+  applyCraftGraphTransform();
+}
+
+function fitCraftGraph(fitAll: boolean): void {
+  const widthScale = (craftGraphViewport.clientWidth - 36) / craftGraphWidth;
+  const heightScale = (craftGraphViewport.clientHeight - 36) / craftGraphHeight;
+  const defaultScale =
+    craftGraphViewport.clientWidth < 600 ? Math.max(0.58, widthScale) : widthScale;
+  craftGraphScale = Math.max(
+    0.24,
+    Math.min(1.15, fitAll ? Math.min(widthScale, heightScale) : defaultScale),
+  );
+  craftGraphX = Math.max(
+    18,
+    (craftGraphViewport.clientWidth - craftGraphWidth * craftGraphScale) / 2,
+  );
+  craftGraphY = 18;
+  applyCraftGraphTransform();
+}
+
+function craftGraphEdgePath(from: CraftGraphNode, to: CraftGraphNode): string {
+  const x1 = from.x + from.width;
+  const y1 = from.y + from.height / 2;
+  const x2 = to.x;
+  const y2 = to.y + to.height / 2;
+  const bend = Math.max(54, (x2 - x1) * 0.46);
+  return `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`;
+}
+
+function craftGraphNodeMarkup(
+  node: CraftGraphNode,
+  tree: ReturnType<typeof buildCraftTree>,
+  snapshot: PublicWorldSnapshot,
+): string {
+  const style = `left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px`;
+  if (node.kind === "material" && node.material) {
+    const pairings = tree.pairings.filter((pairing) =>
+      pairing.ingredients.includes(node.material!),
+    );
+    const discoveries = pairings.reduce((total, pairing) => total + pairing.actions.length, 0);
+    return `<button class="craft-graph-node material" style="${style}" type="button" data-node-id="${node.id}" aria-label="${escapeHtml(node.material)}, ${discoveries} discovered skills">${materialChip(node.material)}<small>${discoveries} SKILLS · ${pairings.length} PAIRINGS</small></button>`;
+  }
+  const pairing = tree.pairings.find((candidate) => candidate.id === node.pairingId);
+  if (!pairing) return "";
+  if (node.kind === "pairing") {
+    const status = pairing.attempts.length
+      ? `${pairing.attempts.length} ACTIVE`
+      : pairing.actions.length
+        ? `${pairing.actions.length} DISCOVERED`
+        : "OPEN";
+    return `<button class="craft-graph-node pairing ${pairing.actions.length ? "discovered" : ""} ${pairing.attempts.length ? "active" : ""}" style="${style}" type="button" data-node-id="${node.id}" aria-label="${escapeHtml(pairing.ingredients.join(" plus "))}, ${status.toLowerCase()}"><span>${materialVisual[pairing.ingredients[0]].rune} + ${materialVisual[pairing.ingredients[1]].rune}</span><strong>${escapeHtml(pairing.ingredients.join(" + ").toUpperCase())}</strong><small>${status}</small></button>`;
+  }
+  const action = pairing.actions.find((candidate) => candidate.definition.id === node.actionId);
+  if (!action) return "";
+  const age = formatTickAge(snapshot.tick, action.definition.createdTick);
+  return `<button class="craft-graph-node action" style="${style}" type="button" data-node-id="${node.id}" aria-label="${escapeHtml(action.definition.name)}, known by ${action.knownBy} agents"><span>${escapeHtml(action.definition.icon)} SKILL · ${age.label}</span><strong>${escapeHtml(action.definition.name)}</strong><small>KNOWN BY ${action.knownBy} / ${snapshot.agents.length} · ${action.definition.uses} USES</small></button>`;
+}
+
+function showCraftGraphDetail(
+  nodeId: string,
+  tree: ReturnType<typeof buildCraftTree>,
+  snapshot: PublicWorldSnapshot,
+): void {
+  selectedCraftGraphNodeId = nodeId;
+  for (const node of craftGraphStage.querySelectorAll<HTMLElement>(".craft-graph-node")) {
+    const selected = node.dataset.nodeId === nodeId;
+    node.classList.toggle("selected", selected);
+    node.setAttribute("aria-pressed", String(selected));
+  }
+  if (nodeId.startsWith("material:")) {
+    const material = nodeId.slice("material:".length) as MaterialKind;
+    const pairings = tree.pairings.filter((pairing) => pairing.ingredients.includes(material));
+    const discovered = pairings.filter((pairing) => pairing.actions.length > 0).length;
+    craftGraphDetail.innerHTML = `<span>MATERIAL ROOT</span><strong>${materialChip(material)}</strong><p>${discovered} of ${pairings.length} connected pairings have produced durable skills.</p><small>SELECT A PAIRING TO FOLLOW ITS EXPERIMENTS.</small>`;
+    return;
+  }
+  if (nodeId.startsWith("pairing:")) {
+    const pairing = tree.pairings.find((candidate) => `pairing:${candidate.id}` === nodeId);
+    if (!pairing) return;
+    const skills = pairing.actions.length
+      ? `<ul>${pairing.actions.map(({ definition }) => `<li>${escapeHtml(definition.icon)} ${escapeHtml(definition.name)}</li>`).join("")}</ul>`
+      : "<p>No durable behavior has survived this pairing yet.</p>";
+    craftGraphDetail.innerHTML = `<span>PAIRING · ${pairing.attempts.length} LIVE ATTEMPTS</span><strong>${materialChip(pairing.ingredients[0])}<i>+</i>${materialChip(pairing.ingredients[1])}</strong>${skills}<small>${pairing.actions.length} RECORDED SKILLS</small>`;
+    return;
+  }
+  const actionId = nodeId.slice("action:".length);
+  const action = tree.pairings
+    .flatMap((pairing) => pairing.actions)
+    .find((candidate) => candidate.definition.id === actionId);
+  if (!action) return;
+  craftGraphDetail.innerHTML = `<span>BOUNDED SKILL · ${freshnessMarkup(snapshot.tick, action.definition.createdTick)}</span><strong>${escapeHtml(action.definition.icon)} ${escapeHtml(action.definition.name)}</strong><p>${escapeHtml(action.definition.algorithm)}</p><code>${escapeHtml(action.definition.program.join(" → "))}</code><small>BUILT T${action.definition.createdTick.toLocaleString()} · ${escapeHtml(action.definition.authorId)} · KNOWN BY ${action.knownBy} / ${snapshot.agents.length} · ${action.definition.uses} USES</small>`;
+}
+
+function renderCraftGraph(
+  tree: ReturnType<typeof buildCraftTree>,
+  snapshot: PublicWorldSnapshot,
+): void {
+  const graph = buildCraftGraphLayout(tree);
+  craftGraphWidth = graph.width;
+  craftGraphHeight = graph.height;
+  const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
+  const edges = graph.edges
+    .map((edge) => {
+      const from = nodesById.get(edge.from);
+      const to = nodesById.get(edge.to);
+      if (!from || !to) return "";
+      return `<path class="${edge.kind}" d="${craftGraphEdgePath(from, to)}"></path>`;
+    })
+    .join("");
+  craftGraphStage.style.width = `${graph.width}px`;
+  craftGraphStage.style.height = `${graph.height}px`;
+  craftGraphStage.innerHTML = `<svg class="craft-graph-edges" width="${graph.width}" height="${graph.height}" viewBox="0 0 ${graph.width} ${graph.height}" aria-hidden="true">${edges}</svg>${graph.nodes.map((node) => craftGraphNodeMarkup(node, tree, snapshot)).join("")}`;
+  for (const node of craftGraphStage.querySelectorAll<HTMLButtonElement>(".craft-graph-node")) {
+    node.addEventListener("click", () =>
+      showCraftGraphDetail(node.dataset.nodeId!, tree, snapshot),
+    );
+  }
+  const selectedExists = selectedCraftGraphNodeId ? nodesById.has(selectedCraftGraphNodeId) : false;
+  const defaultNode =
+    graph.nodes.filter((node) => node.kind === "action").at(-1)?.id ??
+    graph.nodes.find((node) => node.kind === "pairing")?.id;
+  if (selectedExists && selectedCraftGraphNodeId)
+    showCraftGraphDetail(selectedCraftGraphNodeId, tree, snapshot);
+  else if (defaultNode) showCraftGraphDetail(defaultNode, tree, snapshot);
+  if (!craftGraphHasFitted) {
+    window.requestAnimationFrame(() => fitCraftGraph(false));
+    craftGraphHasFitted = true;
+  } else applyCraftGraphTransform();
+}
+
 function renderRecentArtifacts(snapshot: PublicWorldSnapshot): void {
   const artifacts = [...snapshot.artifacts].sort((a, b) => b.builtAt - a.builtAt).slice(0, 8);
   recentArtifactList.innerHTML =
@@ -361,6 +528,7 @@ function renderCraftTree(snapshot: PublicWorldSnapshot): void {
   metric("craft-tree-discovered", `${tree.discoveredPairings} / ${tree.pairings.length}`);
   metric("craft-tree-actions", String(tree.discoveredActions));
   metric("craft-tree-attempts", String(tree.activeAttempts));
+  renderCraftGraph(tree, snapshot);
   renderRecentArtifacts(snapshot);
   craftTreeGrid.innerHTML = craftMaterials
     .map((material, index) => {
@@ -592,6 +760,7 @@ function showAbout(show: boolean, updateHistory = true): void {
 function showCraftTree(show: boolean, updateHistory = true): void {
   const wasVisible = craftTreePage.classList.contains("visible");
   if (show) {
+    if (!wasVisible) craftGraphHasFitted = false;
     if (
       !wasVisible &&
       document.activeElement instanceof HTMLElement &&
@@ -648,6 +817,61 @@ craftTreeButton.addEventListener("click", () => showCraftTree(true));
 craftTreeClose.addEventListener("click", () => showCraftTree(false));
 craftTreeRetry.addEventListener("click", () => void client.retry());
 document
+  .querySelector("#craft-graph-zoom-out")
+  ?.addEventListener("click", () => setCraftGraphZoom(craftGraphScale / 1.2));
+document
+  .querySelector("#craft-graph-zoom-in")
+  ?.addEventListener("click", () => setCraftGraphZoom(craftGraphScale * 1.2));
+document.querySelector("#craft-graph-fit")?.addEventListener("click", () => fitCraftGraph(true));
+craftGraphViewport.addEventListener(
+  "wheel",
+  (event) => {
+    event.preventDefault();
+    const bounds = craftGraphViewport.getBoundingClientRect();
+    setCraftGraphZoom(
+      craftGraphScale * (event.deltaY > 0 ? 0.9 : 1.1),
+      event.clientX - bounds.left,
+      event.clientY - bounds.top,
+    );
+  },
+  { passive: false },
+);
+craftGraphViewport.addEventListener("pointerdown", (event) => {
+  if ((event.target as Element).closest(".craft-graph-node")) return;
+  craftGraphDragging = true;
+  craftGraphPointer = { x: event.clientX, y: event.clientY };
+  craftGraphViewport.classList.add("dragging");
+  craftGraphViewport.setPointerCapture(event.pointerId);
+});
+craftGraphViewport.addEventListener("pointermove", (event) => {
+  if (!craftGraphDragging) return;
+  craftGraphX += event.clientX - craftGraphPointer.x;
+  craftGraphY += event.clientY - craftGraphPointer.y;
+  craftGraphPointer = { x: event.clientX, y: event.clientY };
+  applyCraftGraphTransform();
+});
+const stopCraftGraphDrag = (event: PointerEvent): void => {
+  if (!craftGraphDragging) return;
+  craftGraphDragging = false;
+  craftGraphViewport.classList.remove("dragging");
+  if (craftGraphViewport.hasPointerCapture(event.pointerId))
+    craftGraphViewport.releasePointerCapture(event.pointerId);
+};
+craftGraphViewport.addEventListener("pointerup", stopCraftGraphDrag);
+craftGraphViewport.addEventListener("pointercancel", stopCraftGraphDrag);
+craftGraphViewport.addEventListener("keydown", (event) => {
+  if (event.key === "+" || event.key === "=") setCraftGraphZoom(craftGraphScale * 1.2);
+  else if (event.key === "-") setCraftGraphZoom(craftGraphScale / 1.2);
+  else if (event.key === "0") fitCraftGraph(true);
+  else if (event.key === "ArrowLeft") craftGraphX += 32;
+  else if (event.key === "ArrowRight") craftGraphX -= 32;
+  else if (event.key === "ArrowUp") craftGraphY += 32;
+  else if (event.key === "ArrowDown") craftGraphY -= 32;
+  else return;
+  event.preventDefault();
+  applyCraftGraphTransform();
+});
+document
   .querySelector("#agent-inspector-close")
   ?.addEventListener("click", () => selectAgent(null));
 window.addEventListener("popstate", syncPageFromLocation);
@@ -663,6 +887,9 @@ window.addEventListener("beforeunload", () => {
 });
 window.addEventListener("load", () => {
   if (craftTreePage.classList.contains("visible")) craftTreeClose.focus();
+});
+window.addEventListener("resize", () => {
+  if (craftTreePage.classList.contains("visible")) fitCraftGraph(false);
 });
 
 client.subscribe(renderChrome);

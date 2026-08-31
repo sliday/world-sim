@@ -1021,6 +1021,276 @@ a:focus-visible {
   color: var(--acid);
 }
 
+.craft-graph-section {
+  margin: 2px 0 38px;
+  border: 1px solid rgba(242, 237, 207, 0.22);
+  background: rgba(5, 16, 17, 0.54);
+}
+
+.craft-graph-section > header {
+  display: flex;
+  min-height: 68px;
+  padding: 11px 12px 11px 18px;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
+  border-bottom: 1px solid rgba(242, 237, 207, 0.18);
+}
+
+.craft-graph-section > header > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.craft-graph-section > header span {
+  color: var(--aqua);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+
+.craft-graph-section > header strong {
+  color: var(--cream);
+  font-size: 16px;
+}
+
+.craft-graph-section > header small {
+  color: rgba(242, 237, 207, 0.64);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
+.craft-graph-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.craft-graph-controls button,
+.craft-graph-controls output {
+  display: inline-grid;
+  min-width: 44px;
+  height: 44px;
+  padding: 0 10px;
+  place-items: center;
+  color: var(--cream);
+  border: 1px solid rgba(242, 237, 207, 0.24);
+  background: rgba(242, 237, 207, 0.05);
+  font-size: 12px;
+}
+
+.craft-graph-controls button {
+  cursor: pointer;
+}
+
+.craft-graph-controls button:hover,
+.craft-graph-controls button:focus-visible {
+  color: var(--ink);
+  background: var(--acid);
+}
+
+.craft-graph-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 310px;
+  min-height: 620px;
+}
+
+.craft-graph-viewport {
+  position: relative;
+  min-width: 0;
+  height: min(68dvh, 760px);
+  min-height: 620px;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  background-color: rgba(8, 24, 25, 0.82);
+  background-image:
+    linear-gradient(rgba(119, 216, 207, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(119, 216, 207, 0.055) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+.craft-graph-viewport.dragging {
+  cursor: grabbing;
+}
+
+.craft-graph-stage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.craft-graph-edges {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.craft-graph-edges path {
+  fill: none;
+  stroke: rgba(119, 216, 207, 0.34);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.craft-graph-edges path.discovery {
+  stroke: rgba(219, 244, 92, 0.64);
+  stroke-width: 2.5;
+}
+
+.craft-graph-node {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  min-width: 0;
+  padding: 10px 12px;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 5px;
+  overflow: hidden;
+  color: var(--cream);
+  border: 1px solid rgba(242, 237, 207, 0.28);
+  background: rgba(13, 34, 35, 0.96);
+  box-shadow: 4px 4px 0 rgba(4, 12, 13, 0.68);
+  text-align: left;
+  cursor: pointer;
+}
+
+.craft-graph-node:hover,
+.craft-graph-node:focus-visible {
+  z-index: 2;
+  border-color: var(--acid);
+  background: #15383a;
+  outline: 2px solid var(--acid);
+  outline-offset: 2px;
+}
+
+.craft-graph-node.selected {
+  border-color: var(--acid);
+  box-shadow:
+    0 0 0 3px rgba(219, 244, 92, 0.18),
+    5px 5px 0 rgba(4, 12, 13, 0.72);
+}
+
+.craft-graph-node span,
+.craft-graph-node small {
+  color: rgba(242, 237, 207, 0.72);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+.craft-graph-node strong {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--cream);
+  font-size: 13px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.craft-graph-node.material {
+  border-color: rgba(119, 216, 207, 0.72);
+  background: #102e30;
+}
+
+.craft-graph-node.material .craft-material {
+  font-size: 13px;
+}
+
+.craft-graph-node.pairing.discovered {
+  border-color: var(--aqua);
+  background: #123638;
+}
+
+.craft-graph-node.pairing.active {
+  border-color: var(--purple);
+}
+
+.craft-graph-node.action {
+  border-color: rgba(219, 244, 92, 0.82);
+  background: #1a3430;
+}
+
+.craft-graph-node.action > span,
+.craft-graph-node.action > strong {
+  color: var(--acid);
+}
+
+.craft-graph-detail {
+  min-width: 0;
+  padding: 22px;
+  border-left: 1px solid rgba(242, 237, 207, 0.18);
+  background: rgba(10, 25, 26, 0.96);
+}
+
+.craft-graph-detail > span,
+.craft-graph-detail > small {
+  display: block;
+  color: var(--aqua);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  line-height: 1.45;
+}
+
+.craft-graph-detail > strong {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  margin-top: 15px;
+  color: var(--acid);
+  font-size: 19px;
+  line-height: 1.2;
+}
+
+.craft-graph-detail > strong i {
+  color: rgba(242, 237, 207, 0.44);
+  font-style: normal;
+}
+
+.craft-graph-detail p,
+.craft-graph-detail li {
+  color: rgba(242, 237, 207, 0.8);
+  font-family: system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.craft-graph-detail ul {
+  padding-left: 20px;
+}
+
+.craft-graph-detail code {
+  display: block;
+  margin: 16px 0;
+  overflow-wrap: anywhere;
+  color: var(--aqua);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.craft-tree-index {
+  margin-top: 34px;
+  border-top: 1px solid rgba(242, 237, 207, 0.2);
+}
+
+.craft-tree-index > summary {
+  min-height: 52px;
+  padding: 16px 2px;
+  color: var(--aqua);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+
+.craft-tree-index[open] > summary {
+  color: var(--acid);
+}
+
 .recent-artifacts {
   margin: 4px 0 34px;
   border-top: 1px solid rgba(242, 237, 207, 0.18);
@@ -1612,6 +1882,20 @@ a:focus-visible {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .craft-graph-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .craft-graph-detail {
+    min-height: 220px;
+    border-top: 1px solid rgba(242, 237, 207, 0.18);
+    border-left: 0;
+  }
+
+  .craft-graph-viewport {
+    min-height: 540px;
+  }
+
   .recent-artifact-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1896,6 +2180,41 @@ a:focus-visible {
   .craft-tree-legend .freshness-key {
     width: 100%;
     margin-left: 0;
+  }
+
+  .craft-graph-section {
+    margin-right: -14px;
+    margin-left: -14px;
+    border-right: 0;
+    border-left: 0;
+  }
+
+  .craft-graph-section > header {
+    align-items: flex-start;
+    padding: 12px 14px;
+    flex-direction: column;
+  }
+
+  .craft-graph-controls {
+    width: 100%;
+  }
+
+  .craft-graph-controls output {
+    flex: 1;
+  }
+
+  .craft-graph-viewport {
+    height: 62dvh;
+    min-height: 430px;
+  }
+
+  .craft-graph-detail {
+    min-height: 210px;
+    padding: 18px 14px;
+  }
+
+  .craft-graph-detail > strong {
+    font-size: 17px;
   }
 
   .recent-artifacts {
