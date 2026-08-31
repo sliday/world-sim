@@ -374,6 +374,75 @@ describe("deterministic consequence layer", () => {
     ).toBe(rebootsBefore);
   });
 
+  it("processes build-ready material at its matching station before construction", () => {
+    const world = createInitialWorld(260826081, 0);
+    const agent = world.agents[0]!;
+    const station = world.stations.find((candidate) => candidate.kind === "assay")!;
+    agent.inventory.water = 10;
+    agent.inventory.fungus = 10;
+    agent.directive = {
+      ...agent.directive,
+      goal: "build",
+      targetMaterial: "fungus",
+      actionId: "fabricate",
+    };
+    agent.script = {
+      ...agent.script,
+      actionId: "fabricate",
+      program: ["seek-station"],
+    };
+    agent.x = (station.x + 20) % 96;
+    agent.y = station.y;
+    const positionBefore = { x: agent.x, y: agent.y };
+
+    advanceWorld(world, 1);
+    expect({ x: agent.x, y: agent.y }).not.toEqual(positionBefore);
+    expect(agent.script.lastResult).toBe("seeking assay for fungus");
+
+    agent.script.program = ["build-local"];
+    agent.scriptCursor = 0;
+    advanceWorld(world, 1);
+    expect(world.artifacts).toHaveLength(0);
+    expect(agent.inventory.fungus).toBe(10);
+    expect(agent.inventory.water).toBe(10);
+
+    agent.x = station.x;
+    agent.y = station.y;
+    agent.scriptCursor = 0;
+    advanceWorld(world, 1);
+    const artifact = world.artifacts.at(-1)!;
+    expect(artifact.stationId).toBe(station.id);
+    expect(artifact.process).toBe("assay");
+    expect(artifact.x).toBe(station.x);
+    expect(artifact.y).toBe(station.y);
+    expect(agent.inventory.fungus).toBe(5);
+    expect(agent.inventory.water).toBe(8.5);
+  });
+
+  it("lets persistent fabrication programs reach stations and construct there", () => {
+    const world = createInitialWorld(260826081, 0);
+    engageAllAgentsInPersistentActivities(world);
+
+    advanceWorld(world, 240);
+
+    expect(world.artifacts.length).toBeGreaterThan(0);
+    expect(
+      world.artifacts.every((artifact) => {
+        const station = world.stations.find((candidate) => candidate.id === artifact.stationId);
+        if (!station || artifact.process !== station.kind) return false;
+        const dx = Math.min(
+          Math.abs(artifact.x - station.x),
+          96 - Math.abs(artifact.x - station.x),
+        );
+        const dy = Math.min(
+          Math.abs(artifact.y - station.y),
+          72 - Math.abs(artifact.y - station.y),
+        );
+        return dx * dx + dy * dy <= 2;
+      }),
+    ).toBe(true);
+  }, 15_000);
+
   it("redirects saturated water gathering toward diverse material deficits", () => {
     const world = createInitialWorld(260826081, 0);
     const recoveringAgents = world.agents.slice(0, 20);

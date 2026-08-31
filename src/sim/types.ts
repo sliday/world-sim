@@ -200,6 +200,8 @@ export interface Artifact {
   contributors: string[];
   adopters: string[];
   controller: Controller;
+  stationId?: string;
+  process?: Station["kind"];
   builtAt: number;
   uses: number;
   validated: boolean;

@@ -58,6 +58,14 @@ const CURIOSITY_PER_TICK = 1 / 3_600;
 const CRAFT_INGREDIENT_COST = 2;
 const CARRIED_WATER_SIP = 0.02;
 const CARRIED_WATER_ENERGY = 0.32;
+const PROCESSING_RADIUS_SQUARED = 2;
+const processingStationForMaterial: Record<MaterialKind, Station["kind"]> = {
+  water: "wash",
+  fungus: "assay",
+  mineral: "foundry",
+  cellulose: "weave",
+  chitin: "grind",
+};
 const emptyInventory = (): Inventory => ({
   water: 0,
   fungus: 0,
@@ -701,6 +709,18 @@ function canBuild(agent: Agent): MaterialKind | undefined {
     .find((material) => agent.inventory[material] >= 5 && agent.inventory.water >= 1.5);
 }
 
+function nearestProcessingStation(
+  agent: Agent,
+  state: WorldState,
+  material: MaterialKind,
+): Station | undefined {
+  const requiredKind = processingStationForMaterial[material];
+  return nearest(
+    agent,
+    state.stations.filter((station) => station.kind === requiredKind),
+  );
+}
+
 export function controllerBehaviorDiffers(parent: Controller, child: Controller): boolean {
   return (
     parent.sensor !== child.sensor ||
@@ -772,6 +792,8 @@ function artifactPerformance(
 function build(agent: Agent, state: WorldState, rng: Rng): boolean {
   const material = canBuild(agent);
   if (!material) return false;
+  const station = nearestProcessingStation(agent, state, material);
+  if (!station || distanceSquared(agent, station) > PROCESSING_RADIUS_SQUARED) return false;
   const parent = nearest(agent, state.artifacts);
   const canFork = parent && distanceSquared(agent, parent) <= 16 && parent.authors[0] !== agent.id;
   const controller = controllerFor(agent, canFork ? parent : undefined, rng);
@@ -799,6 +821,8 @@ function build(agent: Agent, state: WorldState, rng: Rng): boolean {
     contributors: [agent.id],
     adopters: [],
     controller,
+    stationId: station.id,
+    process: station.kind,
     builtAt: state.tick,
     uses: 0,
     validated: performance >= 0.57,
@@ -818,8 +842,8 @@ function build(agent: Agent, state: WorldState, rng: Rng): boolean {
     state,
     canFork ? "fork" : "build",
     canFork
-      ? `${agent.name} forked ${parent.name} → ${name} · gen ${generation}`
-      : `${agent.name} built ${name}${artifact.validated ? " · validated" : ""}`,
+      ? `${agent.name} forked ${parent.name} → ${name} at ${station.kind} · gen ${generation}`
+      : `${agent.name} built ${name} at ${station.kind}${artifact.validated ? " · validated" : ""}`,
     artifact.x,
     artifact.y,
   );
@@ -901,6 +925,16 @@ function executeAgentScript(agent: Agent, state: WorldState, rng: Rng): boolean 
       return true;
     }
   } else if (instruction === "seek-resource") {
+    const buildMaterial = agent.directive.goal === "build" ? canBuild(agent) : undefined;
+    if (buildMaterial) {
+      const station = nearestProcessingStation(agent, state, buildMaterial);
+      if (station) {
+        stepToward(agent, station, rng);
+        agent.mode = "fabricating";
+        agent.script.lastResult = `carrying ${buildMaterial} to ${station.kind}`;
+        return true;
+      }
+    }
     let material = agent.directive.targetMaterial;
     if (!agent.materialPurposes[material] && materialStockSatisfied(agent, material)) {
       material = mostNeededMaterial(agent);
@@ -911,11 +945,12 @@ function executeAgentScript(agent: Agent, state: WorldState, rng: Rng): boolean 
     agent.script.lastResult = `seeking ${material}`;
     return true;
   } else if (instruction === "seek-station") {
-    const station = nearest(agent, state.stations);
+    const material = canBuild(agent) ?? agent.directive.targetMaterial;
+    const station = nearestProcessingStation(agent, state, material);
     if (station) {
       stepToward(agent, station, rng);
-      agent.mode = "surveying";
-      agent.script.lastResult = `seeking ${station.kind}`;
+      agent.mode = "fabricating";
+      agent.script.lastResult = `seeking ${station.kind} for ${material}`;
       return true;
     }
   } else if (instruction === "seek-artifact") {
@@ -1181,6 +1216,8 @@ export function decisionObservation(state: WorldState, agent: Agent): Record<str
       performance: Number(artifact.performance.toFixed(2)),
       generation: artifact.generation,
       action: artifact.controller.action,
+      process: artifact.process,
+      stationId: artifact.stationId,
       distance: Number(Math.sqrt(distanceSquared(agent, artifact)).toFixed(1)),
     }));
   return {

@@ -305,7 +305,7 @@ function renderRecentArtifacts(snapshot: PublicWorldSnapshot): void {
         const age = formatTickAge(snapshot.tick, artifact.builtAt);
         return `<article class="recent-artifact ${age.isNew ? "new" : ""}">
           <header><strong>${escapeHtml(artifact.name)}</strong>${freshnessMarkup(snapshot.tick, artifact.builtAt)}</header>
-          <div>${materialChip(artifact.material)}<span>GEN ${artifact.generation}</span><span>${artifact.validated ? "VALIDATED" : "PROVISIONAL"}</span></div>
+          <div>${materialChip(artifact.material)}<span>GEN ${artifact.generation}</span><span>${artifact.process ? `${escapeHtml(artifact.process.toUpperCase())} · ${escapeHtml(artifact.stationId ?? "STATION")}` : "LEGACY PROCESS UNRECORDED"}</span><span>${artifact.validated ? "VALIDATED" : "PROVISIONAL"}</span></div>
           <p>${Math.round(artifact.performance * 100)}% PERFORMANCE · ${Math.round(artifact.health * 100)}% HEALTH</p>
           <small>BUILT T${artifact.builtAt.toLocaleString()} · ${escapeHtml(artifact.creatorId)} · ${artifact.uses.toLocaleString()} USES</small>
         </article>`;
@@ -324,6 +324,8 @@ function craftTreeProjectionSignature(
       artifact.id,
       artifact.uses,
       artifact.validated,
+      artifact.process,
+      artifact.stationId,
       formatTickAge(snapshot.tick, artifact.builtAt).label,
     ]);
   return JSON.stringify({

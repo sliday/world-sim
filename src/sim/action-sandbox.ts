@@ -77,7 +77,8 @@ const baseActions: AgentActionDefinition[] = [
     id: "fabricate",
     name: "Fabricate",
     icon: "⚒",
-    algorithm: "Build from carried matter when possible; otherwise seek a station or feedstock.",
+    algorithm:
+      "Carry build-ready matter to its matching processing station, then construct a situated artifact.",
     program: ["build-local", "seek-station", "seek-resource"],
     authorId: "WORLD",
     createdTick: 0,
