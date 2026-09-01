@@ -1,7 +1,9 @@
-@import url("https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Silkscreen:wght@400;700&display=swap");
 
 :root {
-  font-family: "Silkscreen", monospace;
+  --font-display: "Silkscreen", monospace;
+  --font-data: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--font-data);
   color: #f2edcf;
   background: #102426;
   font-synthesis: none;
@@ -91,8 +93,8 @@ a:focus-visible {
 .masthead p {
   margin: 7px 0 0 32px;
   color: rgba(242, 237, 207, 0.62);
-  font-size: 9px;
-  letter-spacing: 0.23em;
+  font-size: 10px;
+  letter-spacing: 0.16em;
 }
 
 .world-key {
@@ -111,7 +113,7 @@ a:focus-visible {
   gap: 5px;
   padding: 5px 7px;
   color: rgba(242, 237, 207, 0.58);
-  font-size: 8px;
+  font-size: 10px;
   letter-spacing: 0.08em;
 }
 
@@ -123,7 +125,7 @@ a:focus-visible {
 .world-key b,
 .agent-inventory span b {
   color: var(--acid);
-  font-family: monospace;
+  font-family: var(--font-data);
   font-weight: 400;
 }
 
@@ -297,8 +299,8 @@ a:focus-visible {
 .agent-stat-grid span,
 .agent-inventory span {
   color: rgba(242, 237, 207, 0.5);
-  font-size: 8px;
-  letter-spacing: 0.11em;
+  font-size: 10px;
+  letter-spacing: 0.08em;
 }
 
 .agent-inventory span {
@@ -326,8 +328,8 @@ a:focus-visible {
   display: block;
   margin-top: 4px;
   color: rgba(242, 237, 207, 0.52);
-  font-size: 8px;
-  letter-spacing: 0.14em;
+  font-size: 10px;
+  letter-spacing: 0.1em;
 }
 
 .icon-button {
@@ -417,7 +419,7 @@ a:focus-visible {
 
 .agent-directive small {
   color: rgba(242, 237, 207, 0.38);
-  font-size: 8px;
+  font-size: 10px;
   letter-spacing: 0.08em;
 }
 
@@ -441,8 +443,8 @@ a:focus-visible {
 .agent-files summary {
   padding: 8px 13px;
   color: rgba(242, 237, 207, 0.58);
-  font-size: 9px;
-  letter-spacing: 0.1em;
+  font-size: 10px;
+  letter-spacing: 0.08em;
   cursor: pointer;
 }
 
@@ -452,9 +454,7 @@ a:focus-visible {
   overflow-wrap: anywhere;
   white-space: pre-wrap;
   color: rgba(242, 237, 207, 0.72);
-  font:
-    10px/1.45 "Silkscreen",
-    monospace;
+  font: 11px/1.5 var(--font-data);
 }
 
 .agent-heard {
@@ -465,8 +465,8 @@ a:focus-visible {
 .agent-heard > span,
 .agent-heard small {
   color: rgba(242, 237, 207, 0.45);
-  font-size: 8px;
-  letter-spacing: 0.1em;
+  font-size: 10px;
+  letter-spacing: 0.08em;
 }
 
 .agent-heard div {
@@ -497,7 +497,7 @@ a:focus-visible {
 .agent-long-memory > span,
 .agent-long-memory summary {
   color: rgba(242, 237, 207, 0.5);
-  font-size: 8px;
+  font-size: 10px;
   letter-spacing: 0.08em;
 }
 
@@ -522,8 +522,7 @@ a:focus-visible {
   white-space: pre-wrap;
   color: rgba(242, 237, 207, 0.72);
   font:
-    10px/1.4 "Silkscreen",
-    monospace;
+    11px/1.5 var(--font-data);
 }
 
 .agent-long-memory ol {
@@ -539,7 +538,7 @@ a:focus-visible {
 
 .agent-long-memory li b {
   color: var(--purple);
-  font-size: 8px;
+  font-size: 10px;
   font-weight: 400;
   letter-spacing: 0.08em;
 }
@@ -603,8 +602,8 @@ a:focus-visible {
   padding: 11px 13px;
   border-bottom: 1px solid rgba(242, 237, 207, 0.18);
   color: rgba(242, 237, 207, 0.6);
-  font-size: 9px;
-  letter-spacing: 0.16em;
+  font-size: 10px;
+  letter-spacing: 0.12em;
 }
 
 .panel-kicker span:first-child {
@@ -641,7 +640,7 @@ a:focus-visible {
   justify-content: space-between;
   gap: 10px;
   color: var(--aqua);
-  font-size: 9px;
+  font-size: 10px;
   letter-spacing: 0.12em;
 }
 
@@ -653,7 +652,7 @@ a:focus-visible {
 
 .diary-entry > div b {
   color: rgba(242, 237, 207, 0.42);
-  font-size: 8px;
+  font-size: 10px;
   font-weight: 400;
   white-space: nowrap;
 }
@@ -707,7 +706,7 @@ a:focus-visible {
   display: block;
   margin-top: 3px;
   color: rgba(242, 237, 207, 0.34);
-  font-size: 8px;
+  font-size: 10px;
 }
 
 .freshness {
@@ -757,8 +756,8 @@ a:focus-visible {
   display: block;
   margin-bottom: 3px;
   color: rgba(242, 237, 207, 0.48);
-  font-size: 8px;
-  letter-spacing: 0.1em;
+  font-size: 10px;
+  letter-spacing: 0.08em;
 }
 
 .metrics strong {
@@ -773,7 +772,7 @@ a:focus-visible {
   right: 22px;
   bottom: 24px;
   color: rgba(242, 237, 207, 0.46);
-  font-size: 9px;
+  font-size: 10px;
   letter-spacing: 0.08em;
 }
 
@@ -990,7 +989,7 @@ a:focus-visible {
   padding: 22px 0;
   color: rgba(242, 237, 207, 0.78);
   font-size: 12px;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
 }
 
 .craft-tree-legend span {
@@ -1314,7 +1313,7 @@ a:focus-visible {
 .recent-artifacts > header small {
   color: rgba(242, 237, 207, 0.74);
   font-size: 12px;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
 }
 
 .recent-artifacts > header strong {
@@ -1441,7 +1440,7 @@ a:focus-visible {
 
 .craft-material b {
   color: var(--acid);
-  font-family: monospace;
+  font-family: var(--font-data);
   font-weight: 400;
 }
 
@@ -1483,7 +1482,7 @@ a:focus-visible {
   margin-top: 8px;
   color: rgba(242, 237, 207, 0.72);
   font-size: 12px;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
 }
 
 .craft-pairing.discovered > header > span {
@@ -1545,7 +1544,7 @@ a:focus-visible {
   margin: 0 0 10px;
   overflow-wrap: anywhere;
   color: var(--aqua);
-  font-family: "Silkscreen", monospace;
+  font-family: var(--font-display);
   font-size: 12px;
   line-height: 1.35;
 }
@@ -1561,7 +1560,7 @@ a:focus-visible {
   margin-bottom: 5px;
   color: var(--purple);
   font-size: 12px;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
 }
 
 .craft-attempt strong {
@@ -1640,7 +1639,7 @@ a:focus-visible {
   color: #325f61;
   font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.1em;
 }
 
 .about-content h1 {
@@ -1737,7 +1736,7 @@ a:focus-visible {
 .truth-label {
   color: var(--aqua);
   font-size: 10px;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.1em;
 }
 
 .paper-section {
@@ -1940,7 +1939,7 @@ a:focus-visible {
     gap: 5px;
     min-height: 44px;
     padding: 9px 8px;
-    font-size: 9px;
+    font-size: 10px;
   }
 
   .event-panel {
@@ -1992,8 +1991,8 @@ a:focus-visible {
     border: 0;
     border-left: 1px solid rgba(242, 237, 207, 0.18);
     background: rgba(242, 237, 207, 0.06);
-    font-size: 8px;
-    letter-spacing: 0.1em;
+    font-size: 10px;
+    letter-spacing: 0.08em;
   }
 
   .trace-toggle:focus-visible {
@@ -2283,4 +2282,26 @@ a:focus-visible {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* Typography: Silkscreen = display only, IBM Plex Mono = data text */
+.wordmark,
+.pixel-button,
+.recent-artifacts > header strong,
+.recent-artifact header strong,
+.craft-tree-hero h1,
+.agent-inspector-head strong,
+.craft-tree-state strong,
+.craft-graph-section > header strong,
+.craft-graph-detail > strong {
+  font-family: var(--font-display);
+}
+
+.recent-artifact p,
+.recent-artifact small {
+  line-height: 1.5;
+}
+
+.recent-artifact > div > span {
+  line-height: 1.4;
 }
