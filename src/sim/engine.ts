@@ -261,7 +261,7 @@ export function createInitialWorld(seed = 260826081, now = Date.now()): WorldSta
   const rng = new Rng(seed);
   const terrain = createTerrain(seed);
   const state: WorldState = {
-    version: 8,
+    version: 9,
     seed,
     rngState: rng.snapshot,
     tick: 0,
@@ -290,10 +290,14 @@ export function createInitialWorld(seed = 260826081, now = Date.now()): WorldSta
 }
 
 export function ensureAgentOperatingSystem(state: WorldState): WorldState {
-  state.version = 8;
+  state.version = 9;
   state.actionLibrary ??= [];
   const aliases = normalizeActionLibrary(state.actionLibrary);
   state.messages ??= [];
+  for (const message of state.messages) {
+    message.deliverAtTick ??= message.tick;
+    message.deliveredTick ??= message.tick;
+  }
   const priorArtifacts: Artifact[] = [];
   for (const artifact of state.artifacts) {
     artifact.creatorId ??=
@@ -479,17 +483,47 @@ export function deliverSpeech(
   if (!recipient) return false;
   const text = normalizeSpeech(rawSpeech);
   sender.lastSpeech = text;
-  recipient.heardMessages.push({ tick, fromId, text });
-  recipient.heardMessages = recipient.heardMessages.slice(-4);
+  const deliverAtTick =
+    recipient.nextDecisionTick > tick
+      ? recipient.nextDecisionTick
+      : nextScheduledDecisionTick(tick, recipient.decisionPhase);
   state.messages.unshift({
     id: `M${tick}-${fromId}-${recipient.id}-${state.messages.length}`,
     tick,
     fromId,
     toId: recipient.id,
     text,
+    deliverAtTick,
   });
-  state.messages.length = Math.min(state.messages.length, 18);
+  state.messages.length = Math.min(state.messages.length, 128);
   return true;
+}
+
+export function deliverMessagesDue(
+  state: WorldState,
+  recipientId: string,
+  candidateTick: number,
+): number {
+  const recipient = state.agents.find((agent) => agent.id === recipientId);
+  if (!recipient) return 0;
+  const pending = state.messages
+    .filter(
+      (message) =>
+        message.toId === recipientId &&
+        message.deliveredTick === undefined &&
+        (message.deliverAtTick ?? message.tick) <= candidateTick,
+    )
+    .sort((first, second) => first.tick - second.tick || first.id.localeCompare(second.id));
+  for (const message of pending) {
+    message.deliveredTick = candidateTick;
+    recipient.heardMessages.push({
+      tick: message.tick,
+      fromId: message.fromId,
+      text: message.text,
+    });
+  }
+  recipient.heardMessages = recipient.heardMessages.slice(-4);
+  return pending.length;
 }
 
 function localSpeech(state: WorldState, agent: Agent): string {

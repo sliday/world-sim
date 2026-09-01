@@ -12,6 +12,7 @@ import {
   createInitialWorld,
   decisionAgentsDue,
   decisionPhaseForAgent,
+  deliverMessagesDue,
   deliverSpeech,
   ensureAgentOperatingSystem,
   isArtifactContact,
@@ -728,7 +729,15 @@ describe("deterministic consequence layer", () => {
     );
     expect(world.messages).toHaveLength(1);
     expect(world.messages[0]?.text).toBe("Fungus rich east come gather.");
+    expect(world.messages[0]?.deliverAtTick).toBe(recipient.nextDecisionTick);
+    expect(world.messages[0]?.deliveredTick).toBeUndefined();
+    expect(recipient.heardMessages).toHaveLength(0);
+    expect(deliverMessagesDue(world, recipient.id, recipient.nextDecisionTick - 1)).toBe(0);
+    expect(recipient.heardMessages).toHaveLength(0);
+    expect(deliverMessagesDue(world, recipient.id, recipient.nextDecisionTick)).toBe(1);
     expect(recipient.heardMessages[0]?.fromId).toBe(sender.id);
+    expect(world.messages[0]?.deliveredTick).toBe(recipient.nextDecisionTick);
+    expect(deliverMessagesDue(world, recipient.id, recipient.nextDecisionTick)).toBe(0);
   });
 
   it("replays the same seed exactly", () => {
@@ -890,6 +899,9 @@ describe("deterministic consequence layer", () => {
     const directive = structuredClone(agent.directive);
     const script = structuredClone(agent.script);
     world.tick = 137;
+    world.messages = [
+      { id: "legacy-message", tick: 120, fromId: "A001", toId: "A002", text: "Water east." },
+    ];
     const legacy = world as unknown as {
       version: number;
       agents: Array<{
@@ -912,7 +924,7 @@ describe("deterministic consequence layer", () => {
     delete legacy.agents[37]!.materialPurposes;
 
     ensureAgentOperatingSystem(world);
-    expect(world.version).toBe(8);
+    expect(world.version).toBe(9);
     expect(agent.directive).toEqual(directive);
     expect(agent.script).toEqual(script);
     expect(agent.decisionPhase).toBe(decisionPhaseForAgent(agent.id));
@@ -925,6 +937,7 @@ describe("deterministic consequence layer", () => {
     expect(world.actionLibrary.map((action) => action.id)).toEqual(
       expect.arrayContaining(["craft", "creative-session"]),
     );
+    expect(world.messages[0]).toMatchObject({ deliverAtTick: 120, deliveredTick: 120 });
   });
 
   it("starts artifact flux and strict validation evidence without inventing history", () => {
@@ -952,7 +965,7 @@ describe("deterministic consequence layer", () => {
     ensureAgentOperatingSystem(world);
     const artifact = world.artifacts[0]!;
 
-    expect(world.version).toBe(8);
+    expect(world.version).toBe(9);
     expect(artifact.storedWater).toBe(0);
     expect(artifact.reserve).toBe(1.5);
     expect(artifact.flux).toEqual({

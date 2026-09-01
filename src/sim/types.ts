@@ -105,6 +105,8 @@ export interface HeardMessage {
 export interface AgentMessage extends HeardMessage {
   id: string;
   toId: string;
+  deliverAtTick?: number;
+  deliveredTick?: number;
 }
 
 export interface AgentActionProposal {
@@ -291,7 +293,7 @@ export interface WorldMetrics {
 }
 
 export interface WorldState {
-  version: 8;
+  version: 9;
   seed: number;
   rngState: number;
   tick: number;

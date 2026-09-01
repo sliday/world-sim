@@ -8,6 +8,7 @@ import {
   createInitialWorld,
   decisionAgentsDue,
   decisionObservation,
+  deliverMessagesDue,
   ensureAgentOperatingSystem,
   MODEL_MACROTURN_INTERVAL_TICKS,
   publicSnapshot,
@@ -702,6 +703,11 @@ export class WorldRoom extends DurableObject<Env> {
       serviceVerifiedArtifacts: world.artifacts.filter(
         (artifact) => (artifact.serviceInspectedBy?.length ?? 0) > 0,
       ).length,
+      pendingMessages: world.messages.filter((message) => message.deliveredTick === undefined)
+        .length,
+      deliveredMessagesRetained: world.messages.filter(
+        (message) => message.deliveredTick !== undefined,
+      ).length,
       livePortfolioResilience: metrics.portfolioResilience,
       serviceTrackingStartedTick: Math.min(
         world.tick,
@@ -738,6 +744,11 @@ export class WorldRoom extends DurableObject<Env> {
     try {
       const world = await this.load();
       const previousMessages = new Set(world.messages.map((message) => message.id));
+      const previousDeliveredMessages = new Set(
+        world.messages
+          .filter((message) => message.deliveredTick !== undefined)
+          .map((message) => message.id),
+      );
       const previousEvents = new Set(world.events.map((event) => event.id));
       const candidateTick = world.tick + 1;
       const canAdvance = await this.maybeAskModel(world, candidateTick);
@@ -751,9 +762,14 @@ export class WorldRoom extends DurableObject<Env> {
           "said",
           `Said to ${message.toId}: “${message.text}”`,
         );
+      }
+      for (const message of world.messages.filter(
+        (candidate) =>
+          candidate.deliveredTick !== undefined && !previousDeliveredMessages.has(candidate.id),
+      )) {
         this.appendAgentMemory(
           message.toId,
-          message.tick,
+          message.deliveredTick!,
           "heard",
           `Heard ${message.fromId}: “${message.text}”`,
         );
@@ -821,6 +837,7 @@ export class WorldRoom extends DurableObject<Env> {
     // provider response timing cannot change simulation ordering.
     const parallelism = Math.min(positiveInteger(this.env.LLM_PARALLELISM, 6, 6), remaining);
     const agents = dueAgents.slice(0, parallelism);
+    for (const agent of agents) deliverMessagesDue(world, agent.id, candidateTick);
     const policyCore = this.nullclawPolicy();
     const outcomes = await Promise.all(
       agents.map(async (agent) => {
