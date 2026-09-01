@@ -402,13 +402,7 @@ export function ensureAgentOperatingSystem(state: WorldState): WorldState {
     const rng = new Rng(state.rngState);
     while (state.agents.length < state.targetAgentCount)
       state.agents.push(
-        createAgent(
-          state.terrain,
-          rng,
-          state.seed,
-          state.agents.length,
-          state.targetAgentCount,
-        ),
+        createAgent(state.terrain, rng, state.seed, state.agents.length, state.targetAgentCount),
       );
     state.rngState = rng.snapshot;
   }
@@ -433,11 +427,7 @@ export function ensureAgentOperatingSystem(state: WorldState): WorldState {
     agent.decisionPhase = Number.isInteger(agent.decisionPhase)
       ? ((agent.decisionPhase % MODEL_MACROTURN_INTERVAL_TICKS) + MODEL_MACROTURN_INTERVAL_TICKS) %
         MODEL_MACROTURN_INTERVAL_TICKS
-      : decisionPhaseForAgent(
-          agent.id,
-          MODEL_MACROTURN_INTERVAL_TICKS,
-          state.targetAgentCount,
-        );
+      : decisionPhaseForAgent(agent.id, MODEL_MACROTURN_INTERVAL_TICKS, state.targetAgentCount);
     agent.nextDecisionTick =
       Number.isInteger(agent.nextDecisionTick) && agent.nextDecisionTick > state.tick
         ? agent.nextDecisionTick

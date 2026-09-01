@@ -521,8 +521,7 @@ a:focus-visible {
   padding: 0;
   white-space: pre-wrap;
   color: rgba(242, 237, 207, 0.72);
-  font:
-    11px/1.5 var(--font-data);
+  font: 11px/1.5 var(--font-data);
 }
 
 .agent-long-memory ol {
