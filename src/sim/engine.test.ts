@@ -731,6 +731,11 @@ describe("deterministic consequence layer", () => {
     expect(world.messages[0]?.text).toBe("Fungus rich east come gather.");
     expect(world.messages[0]?.deliverAtTick).toBe(recipient.nextDecisionTick);
     expect(world.messages[0]?.deliveredTick).toBeUndefined();
+    ensureAgentOperatingSystem(world);
+    expect(world.messages[0]?.deliveredTick).toBeUndefined();
+    world.messages[0]!.deliveredTick = world.messages[0]!.tick;
+    ensureAgentOperatingSystem(world);
+    expect(world.messages[0]?.deliveredTick).toBeUndefined();
     expect(recipient.heardMessages).toHaveLength(0);
     expect(deliverMessagesDue(world, recipient.id, recipient.nextDecisionTick - 1)).toBe(0);
     expect(recipient.heardMessages).toHaveLength(0);

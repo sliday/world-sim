@@ -290,13 +290,19 @@ export function createInitialWorld(seed = 260826081, now = Date.now()): WorldSta
 }
 
 export function ensureAgentOperatingSystem(state: WorldState): WorldState {
+  const previousVersion = Number(state.version);
   state.version = 9;
   state.actionLibrary ??= [];
   const aliases = normalizeActionLibrary(state.actionLibrary);
   state.messages ??= [];
   for (const message of state.messages) {
     message.deliverAtTick ??= message.tick;
-    message.deliveredTick ??= message.tick;
+    if (previousVersion < 9) message.deliveredTick ??= message.tick;
+    else if (
+      message.deliveredTick !== undefined &&
+      message.deliveredTick < (message.deliverAtTick ?? message.tick)
+    )
+      message.deliveredTick = undefined;
   }
   const priorArtifacts: Artifact[] = [];
   for (const artifact of state.artifacts) {
