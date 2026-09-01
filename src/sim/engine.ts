@@ -59,6 +59,8 @@ const CRAFT_INGREDIENT_COST = 2;
 const CARRIED_WATER_SIP = 0.02;
 const CARRIED_WATER_ENERGY = 0.32;
 const PROCESSING_RADIUS_SQUARED = 2;
+const ARTIFACT_STORAGE_CAPACITY = 2;
+const INITIAL_ARTIFACT_RESERVE = 1.5;
 const processingStationForMaterial: Record<MaterialKind, Station["kind"]> = {
   water: "wash",
   fungus: "assay",
@@ -256,7 +258,7 @@ export function createInitialWorld(seed = 260826081, now = Date.now()): WorldSta
   const rng = new Rng(seed);
   const terrain = createTerrain(seed);
   const state: WorldState = {
-    version: 4,
+    version: 5,
     seed,
     rngState: rng.snapshot,
     tick: 0,
@@ -285,7 +287,7 @@ export function createInitialWorld(seed = 260826081, now = Date.now()): WorldSta
 }
 
 export function ensureAgentOperatingSystem(state: WorldState): WorldState {
-  state.version = 4;
+  state.version = 5;
   state.actionLibrary ??= [];
   const aliases = normalizeActionLibrary(state.actionLibrary);
   state.messages ??= [];
@@ -294,6 +296,15 @@ export function ensureAgentOperatingSystem(state: WorldState): WorldState {
       artifact.id.match(/-(A\d{3})$/u)?.[1] ?? artifact.authors.at(-1) ?? artifact.authors[0]!;
     artifact.adopters ??= [];
     artifact.contributors ??= [artifact.creatorId];
+    artifact.storedWater ??= 0;
+    artifact.reserve ??= INITIAL_ARTIFACT_RESERVE;
+    artifact.flux ??= {
+      waterCollected: 0,
+      contaminationRemoved: 0,
+      reserveConsumed: 0,
+      maintenanceInput: 0,
+    };
+    artifact.fluxTrackingStartedTick ??= state.tick;
   }
   state.discoveryFrontierPerformance ??= state.artifacts.reduce(
     (best, artifact) => Math.max(best, artifact.performance),
@@ -402,6 +413,10 @@ function emptyMetrics(): WorldMetrics {
     meanRegionsVisited: 0,
     artifactContactRate: 0,
     spatialEntropy: 0,
+    operationalWaterCollected: 0,
+    operationalContaminationRemoved: 0,
+    operationalReserveConsumed: 0,
+    maintenanceMaterialInput: 0,
   };
 }
 
@@ -823,6 +838,15 @@ function build(agent: Agent, state: WorldState, rng: Rng): boolean {
     controller,
     stationId: station.id,
     process: station.kind,
+    storedWater: 0,
+    reserve: INITIAL_ARTIFACT_RESERVE,
+    flux: {
+      waterCollected: 0,
+      contaminationRemoved: 0,
+      reserveConsumed: 0,
+      maintenanceInput: 0,
+    },
+    fluxTrackingStartedTick: state.tick,
     builtAt: state.tick,
     uses: 0,
     validated: performance >= 0.57,
@@ -860,6 +884,7 @@ function inspectOrMaintain(agent: Agent, state: WorldState, rng: Rng, repair: bo
   if (repair && agent.inventory.water >= 0.2) {
     artifact.health = Math.min(1, artifact.health + 0.055);
     agent.inventory.water -= 0.2;
+    artifact.flux!.maintenanceInput += 0.2;
     if (!artifact.contributors.includes(agent.id)) artifact.contributors.push(agent.id);
     agent.mode = "maintaining";
     if (rng.chance(0.02))
@@ -1003,14 +1028,37 @@ function advanceArtifacts(state: WorldState, rng: Rng): void {
     if (sensorValue(artifact, tile) < artifact.controller.threshold || artifact.health <= 0.05)
       continue;
     const strength = artifact.performance * artifact.health * 0.018;
-    if (artifact.controller.action === "collect-water")
-      tile.moisture = Math.min(1, tile.moisture + strength);
-    if (artifact.controller.action === "remediate")
-      tile.contamination = Math.max(0, tile.contamination - strength);
-    if (artifact.controller.action === "heal")
-      artifact.health = Math.min(1, artifact.health + strength * 0.8);
-    if (artifact.controller.action === "grow")
-      tile.richness = Math.min(1, tile.richness + strength * 0.5);
+    const flux = artifact.flux!;
+    if (artifact.controller.action === "collect-water") {
+      const amount = Math.min(
+        strength,
+        tile.moisture,
+        Math.max(0, ARTIFACT_STORAGE_CAPACITY - artifact.storedWater!),
+      );
+      tile.moisture -= amount;
+      artifact.storedWater! += amount;
+      flux.waterCollected += amount;
+    }
+    if (artifact.controller.action === "remediate") {
+      const amount = Math.min(strength, tile.contamination, artifact.reserve! * 2);
+      const reserveUsed = amount * 0.5;
+      tile.contamination -= amount;
+      artifact.reserve! -= reserveUsed;
+      flux.contaminationRemoved += amount;
+      flux.reserveConsumed += reserveUsed;
+    }
+    if (artifact.controller.action === "heal") {
+      const amount = Math.min(strength * 0.8, 1 - artifact.health, artifact.reserve!);
+      artifact.health += amount;
+      artifact.reserve! -= amount;
+      flux.reserveConsumed += amount;
+    }
+    if (artifact.controller.action === "grow") {
+      const amount = Math.min(strength * 0.5, 1 - tile.richness, artifact.reserve!);
+      tile.richness += amount;
+      artifact.reserve! -= amount;
+      flux.reserveConsumed += amount;
+    }
     if (artifact.controller.action === "signal" && rng.chance(0.03)) {
       const agent = nearest(artifact, state.agents);
       if (agent) agent.script.lastResult = `received signal from ${artifact.id}`;
@@ -1306,6 +1354,16 @@ export function calculateMetrics(state: WorldState): WorldMetrics {
       }, 0)
     : 0;
   const maximumEntropy = Math.log(Math.min(100, Math.max(1, state.agents.length)));
+  const fluxTotals = state.artifacts.reduce(
+    (totals, artifact) => ({
+      waterCollected: totals.waterCollected + (artifact.flux?.waterCollected ?? 0),
+      contaminationRemoved:
+        totals.contaminationRemoved + (artifact.flux?.contaminationRemoved ?? 0),
+      reserveConsumed: totals.reserveConsumed + (artifact.flux?.reserveConsumed ?? 0),
+      maintenanceInput: totals.maintenanceInput + (artifact.flux?.maintenanceInput ?? 0),
+    }),
+    { waterCollected: 0, contaminationRemoved: 0, reserveConsumed: 0, maintenanceInput: 0 },
+  );
   return {
     activeAgents: state.agents.filter((agent) => agent.energy > 0).length,
     artifacts: state.artifacts.length,
@@ -1330,6 +1388,10 @@ export function calculateMetrics(state: WorldState): WorldMetrics {
     meanRegionsVisited: state.agents.length ? regionsVisited / state.agents.length : 0,
     artifactContactRate: observedTicks ? contactTicks / observedTicks : 0,
     spatialEntropy: maximumEntropy ? entropy / maximumEntropy : 0,
+    operationalWaterCollected: fluxTotals.waterCollected,
+    operationalContaminationRemoved: fluxTotals.contaminationRemoved,
+    operationalReserveConsumed: fluxTotals.reserveConsumed,
+    maintenanceMaterialInput: fluxTotals.maintenanceInput,
   };
 }
 

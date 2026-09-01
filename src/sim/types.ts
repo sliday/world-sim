@@ -202,6 +202,15 @@ export interface Artifact {
   controller: Controller;
   stationId?: string;
   process?: Station["kind"];
+  storedWater?: number;
+  reserve?: number;
+  flux?: {
+    waterCollected: number;
+    contaminationRemoved: number;
+    reserveConsumed: number;
+    maintenanceInput: number;
+  };
+  fluxTrackingStartedTick?: number;
   builtAt: number;
   uses: number;
   validated: boolean;
@@ -249,10 +258,14 @@ export interface WorldMetrics {
   meanRegionsVisited: number;
   artifactContactRate: number;
   spatialEntropy: number;
+  operationalWaterCollected: number;
+  operationalContaminationRemoved: number;
+  operationalReserveConsumed: number;
+  maintenanceMaterialInput: number;
 }
 
 export interface WorldState {
-  version: 4;
+  version: 5;
   seed: number;
   rngState: number;
   tick: number;

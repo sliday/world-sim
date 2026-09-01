@@ -18,6 +18,7 @@ This is a live implementation track toward the paper's core mechanics, not a rep
 - The read-only Craft Tree is a zoomable, pannable knowledge graph from material roots through all 15 pairings to discovered skills; selecting a node opens its evidence and provenance, while a collapsed text index preserves linear access.
 - Carried water is a finite energy reserve, not an endlessly rewarding gathering tile. Bots sip it when energy is low, retain physical inventory through a reboot, and leave saturated water gathering for agent-staggered material deficits.
 - The deterministic consequence layer—not an LLM—validates resources, actions, health, performance, and failure.
+- Artifact operation now uses closed physical fluxes: water capture transfers local moisture into bounded storage, remediation cannot remove more contamination than exists or reserve can support, and healing/growth consume finite embodied reserve. Per-artifact flux ledgers begin at schema-v5 migration; no pre-migration operation history is invented.
 - Artifacts remain in the world, can be physically encountered by later agents, and retain executable lineage.
 - Bounded movement trails expose mean path length, regions visited, artifact-contact rate, and spatial entropy without allowing history to grow unbounded.
 - Private SQLite episodic logs retain up to approximately 250,000 tokens per agent with deterministic compaction.

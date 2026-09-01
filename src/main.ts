@@ -474,6 +474,7 @@ function renderRecentArtifacts(snapshot: PublicWorldSnapshot): void {
           <header><strong>${escapeHtml(artifact.name)}</strong>${freshnessMarkup(snapshot.tick, artifact.builtAt)}</header>
           <div>${materialChip(artifact.material)}<span>GEN ${artifact.generation}</span><span>${artifact.process ? `${escapeHtml(artifact.process.toUpperCase())} · ${escapeHtml(artifact.stationId ?? "STATION")}` : "LEGACY PROCESS UNRECORDED"}</span><span>${artifact.validated ? "VALIDATED" : "PROVISIONAL"}</span></div>
           <p>${Math.round(artifact.performance * 100)}% PERFORMANCE · ${Math.round(artifact.health * 100)}% HEALTH</p>
+          <p>STORE ${artifact.storedWater?.toFixed(1) ?? "0.0"} WATER · RESERVE ${artifact.reserve?.toFixed(1) ?? "0.0"}<br>FLOW ${artifact.flux?.waterCollected.toFixed(1) ?? "0.0"} CAPTURED · ${artifact.flux?.contaminationRemoved.toFixed(1) ?? "0.0"} REMOVED · ${artifact.flux?.reserveConsumed.toFixed(1) ?? "0.0"} RESERVE USED</p>
           <small>BUILT T${artifact.builtAt.toLocaleString()} · ${escapeHtml(artifact.creatorId)} · ${artifact.uses.toLocaleString()} USES</small>
         </article>`;
       })
@@ -493,6 +494,11 @@ function craftTreeProjectionSignature(
       artifact.validated,
       artifact.process,
       artifact.stationId,
+      artifact.storedWater?.toFixed(1),
+      artifact.reserve?.toFixed(1),
+      artifact.flux?.waterCollected.toFixed(1),
+      artifact.flux?.contaminationRemoved.toFixed(1),
+      artifact.flux?.reserveConsumed.toFixed(1),
       formatTickAge(snapshot.tick, artifact.builtAt).label,
     ]);
   return JSON.stringify({

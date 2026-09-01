@@ -645,6 +645,7 @@ export class WorldRoom extends DurableObject<Env> {
     await this.ensureAlarm();
     return {
       ok: true,
+      schema: world.version,
       tick: world.tick,
       agents: world.agents.length,
       artifacts: world.artifacts.length,
@@ -664,6 +665,16 @@ export class WorldRoom extends DurableObject<Env> {
       completedCrafts: world.agents.reduce((total, agent) => total + agent.crafts, 0),
       meanCuriosity:
         world.agents.reduce((total, agent) => total + agent.curiosity, 0) / world.agents.length,
+      artifactFluxTrackingStartedTick: Math.min(
+        world.tick,
+        ...world.artifacts.map((artifact) => artifact.fluxTrackingStartedTick ?? world.tick),
+      ),
+      artifactFlux: {
+        waterCollected: world.metrics.operationalWaterCollected,
+        contaminationRemoved: world.metrics.operationalContaminationRemoved,
+        reserveConsumed: world.metrics.operationalReserveConsumed,
+        maintenanceInput: world.metrics.maintenanceMaterialInput,
+      },
       memoryTokenCapPerAgent: AGENT_MEMORY_TOKEN_CAP,
       worldDecisionIntervalMs: positiveInteger(this.env.ALARM_INTERVAL_MS, 1_000, 60_000),
       decisionsPerWorldTick: world.agents.length,

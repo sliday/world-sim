@@ -36,7 +36,13 @@ import {
   normalizeWorldDiaryLines,
   WORLD_DIARY_INTERVAL_TICKS,
 } from "./world-diary";
-import type { AgentActionDefinition, AgentDirective, WorldState } from "./types";
+import type {
+  AgentActionDefinition,
+  AgentDirective,
+  Artifact,
+  ControllerAction,
+  WorldState,
+} from "./types";
 
 function engageAllAgentsInPersistentActivities(world: WorldState): void {
   for (const [index, agent] of world.agents.entries()) {
@@ -88,6 +94,36 @@ function signature(steps: number): unknown {
       performance,
       controller,
     })),
+  };
+}
+
+function fluxArtifact(action: ControllerAction): Artifact {
+  return {
+    id: `flux-${action}`,
+    name: `Flux ${action}`,
+    x: 0,
+    y: 0,
+    material: "mineral",
+    health: 1,
+    performance: 1,
+    generation: 1,
+    creatorId: "A001",
+    authors: ["A001"],
+    contributors: ["A001"],
+    adopters: [],
+    controller: { sensor: "contamination", threshold: 0, action, revision: 1 },
+    storedWater: 0,
+    reserve: 1.5,
+    flux: {
+      waterCollected: 0,
+      contaminationRemoved: 0,
+      reserveConsumed: 0,
+      maintenanceInput: 0,
+    },
+    fluxTrackingStartedTick: 0,
+    builtAt: 0,
+    uses: 0,
+    validated: true,
   };
 }
 
@@ -443,6 +479,51 @@ describe("deterministic consequence layer", () => {
     ).toBe(true);
   }, 15_000);
 
+  it("conserves water when an artifact transfers local moisture into storage", () => {
+    const world = createInitialWorld(260826081, 0);
+    const artifact = fluxArtifact("collect-water");
+    world.artifacts = [artifact];
+    world.terrain[0]!.moisture = 0.8;
+    world.terrain[0]!.contamination = 0.5;
+    const waterBefore = world.terrain[0]!.moisture + artifact.storedWater!;
+
+    advanceWorld(world, 1);
+
+    const waterAfter = world.terrain[0]!.moisture + artifact.storedWater!;
+    expect(waterAfter).toBeCloseTo(waterBefore, 10);
+    expect(artifact.storedWater).toBeGreaterThan(0);
+    expect(artifact.flux!.waterCollected).toBeCloseTo(artifact.storedWater!, 10);
+    expect(calculateMetrics(world).operationalWaterCollected).toBeCloseTo(
+      artifact.storedWater!,
+      10,
+    );
+  });
+
+  it("bounds remediation by local contamination and finite embodied reserve", () => {
+    const world = createInitialWorld(260826081, 0);
+    const artifact = fluxArtifact("remediate");
+    artifact.reserve = 0.01;
+    world.artifacts = [artifact];
+    world.terrain[0]!.contamination = 0.7;
+    const contaminationBefore = world.terrain[0]!.contamination;
+    const reserveBefore = artifact.reserve!;
+
+    advanceWorld(world, 1);
+
+    const removed = contaminationBefore - world.terrain[0]!.contamination;
+    const reserveUsed = reserveBefore - artifact.reserve!;
+    expect(removed).toBeGreaterThan(0);
+    expect(removed).toBeLessThanOrEqual(0.02);
+    expect(reserveUsed).toBeCloseTo(removed * 0.5, 10);
+    expect(artifact.flux!.contaminationRemoved).toBeCloseTo(removed, 10);
+    expect(artifact.flux!.reserveConsumed).toBeCloseTo(reserveUsed, 10);
+
+    artifact.reserve = 0;
+    const exhaustedContamination = world.terrain[0]!.contamination;
+    advanceWorld(world, 1);
+    expect(world.terrain[0]!.contamination).toBe(exhaustedContamination);
+  });
+
   it("redirects saturated water gathering toward diverse material deficits", () => {
     const world = createInitialWorld(260826081, 0);
     const recoveringAgents = world.agents.slice(0, 20);
@@ -711,7 +792,7 @@ describe("deterministic consequence layer", () => {
     delete legacy.agents[37]!.materialPurposes;
 
     ensureAgentOperatingSystem(world);
-    expect(world.version).toBe(4);
+    expect(world.version).toBe(5);
     expect(agent.directive).toEqual(directive);
     expect(agent.script).toEqual(script);
     expect(agent.decisionPhase).toBe(decisionPhaseForAgent(agent.id));
@@ -724,6 +805,43 @@ describe("deterministic consequence layer", () => {
     expect(world.actionLibrary.map((action) => action.id)).toEqual(
       expect.arrayContaining(["craft", "creative-session"]),
     );
+  });
+
+  it("starts schema-v5 artifact flux ledgers without inventing pre-migration operation history", () => {
+    const world = createInitialWorld(14, 0);
+    world.tick = 137;
+    world.artifacts.push({
+      id: "T000012-A001",
+      name: "Legacy Veil",
+      x: 4,
+      y: 5,
+      material: "fungus",
+      health: 0.8,
+      performance: 0.64,
+      generation: 1,
+      creatorId: "A001",
+      authors: ["A001"],
+      contributors: ["A001"],
+      adopters: [],
+      controller: { sensor: "contamination", threshold: 0.4, action: "remediate", revision: 1 },
+      builtAt: 12,
+      uses: 3,
+      validated: true,
+    });
+
+    ensureAgentOperatingSystem(world);
+    const artifact = world.artifacts[0]!;
+
+    expect(world.version).toBe(5);
+    expect(artifact.storedWater).toBe(0);
+    expect(artifact.reserve).toBe(1.5);
+    expect(artifact.flux).toEqual({
+      waterCollected: 0,
+      contaminationRemoved: 0,
+      reserveConsumed: 0,
+      maintenanceInput: 0,
+    });
+    expect(artifact.fluxTrackingStartedTick).toBe(137);
   });
 
   it("canonicalizes and caps a full legacy action library without evicting base actions", () => {
