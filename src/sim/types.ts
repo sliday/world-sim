@@ -84,7 +84,16 @@ export interface AgentDirective {
   actionProposal?: AgentActionProposal;
   craftActionId?: string;
   creativeSession?: CreativeSessionProposal;
+  artifactSpecification?: ArtifactSpecification;
   speech?: string;
+}
+
+export interface ArtifactSpecification {
+  name: string;
+  claimedFunction: string;
+  architecture: string;
+  bioInspiration: string;
+  predictedEffects: string;
 }
 
 export interface HeardMessage {
@@ -202,6 +211,15 @@ export interface Artifact {
   controller: Controller;
   stationId?: string;
   process?: Station["kind"];
+  specification?: ArtifactSpecification;
+  validation?: {
+    testedMaterial: boolean;
+    completeSpecification: boolean;
+    installedAgentController: boolean;
+    performanceThreshold: boolean;
+    processProvenance: boolean;
+    behaviorallyNovel: boolean;
+  };
   storedWater?: number;
   reserve?: number;
   flux?: {
@@ -265,7 +283,7 @@ export interface WorldMetrics {
 }
 
 export interface WorldState {
-  version: 5;
+  version: 6;
   seed: number;
   rngState: number;
   tick: number;

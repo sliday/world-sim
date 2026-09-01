@@ -19,6 +19,7 @@ This is a live implementation track toward the paper's core mechanics, not a rep
 - Carried water is a finite energy reserve, not an endlessly rewarding gathering tile. Bots sip it when energy is low, retain physical inventory through a reboot, and leave saturated water gathering for agent-staggered material deficits.
 - The deterministic consequence layer—not an LLM—validates resources, actions, health, performance, and failure.
 - Artifact operation now uses closed physical fluxes: water capture transfers local moisture into bounded storage, remediation cannot remove more contamination than exists or reserve can support, and healing/growth consume finite embodied reserve. Per-artifact flux ledgers begin at schema-v5 migration; no pre-migration operation history is invented.
+- Schema v6 replaces the old performance-only `validated` flag with six explicit gates: deterministic material test, complete agent-authored specification, installed bounded controller, processing provenance, performance threshold, and novel controller behavior. Legacy artifacts retain their evidence but remain provisional when a gate cannot be reconstructed.
 - Artifacts remain in the world, can be physically encountered by later agents, and retain executable lineage.
 - Bounded movement trails expose mean path length, regions visited, artifact-contact rate, and spatial entropy without allowing history to grow unbounded.
 - Private SQLite episodic logs retain up to approximately 250,000 tokens per agent with deterministic compaction.

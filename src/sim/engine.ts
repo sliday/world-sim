@@ -19,6 +19,7 @@ import {
   type AgentDirective,
   type AgentGoal,
   type Artifact,
+  type ArtifactSpecification,
   type Controller,
   type ControllerAction,
   type CraftingTarget,
@@ -258,7 +259,7 @@ export function createInitialWorld(seed = 260826081, now = Date.now()): WorldSta
   const rng = new Rng(seed);
   const terrain = createTerrain(seed);
   const state: WorldState = {
-    version: 5,
+    version: 6,
     seed,
     rngState: rng.snapshot,
     tick: 0,
@@ -287,10 +288,11 @@ export function createInitialWorld(seed = 260826081, now = Date.now()): WorldSta
 }
 
 export function ensureAgentOperatingSystem(state: WorldState): WorldState {
-  state.version = 5;
+  state.version = 6;
   state.actionLibrary ??= [];
   const aliases = normalizeActionLibrary(state.actionLibrary);
   state.messages ??= [];
+  const priorArtifacts: Artifact[] = [];
   for (const artifact of state.artifacts) {
     artifact.creatorId ??=
       artifact.id.match(/-(A\d{3})$/u)?.[1] ?? artifact.authors.at(-1) ?? artifact.authors[0]!;
@@ -305,6 +307,9 @@ export function ensureAgentOperatingSystem(state: WorldState): WorldState {
       maintenanceInput: 0,
     };
     artifact.fluxTrackingStartedTick ??= state.tick;
+    artifact.validation ??= artifactValidationEvidence(artifact, priorArtifacts);
+    artifact.validated = Object.values(artifact.validation).every(Boolean);
+    priorArtifacts.push(artifact);
   }
   state.discoveryFrontierPerformance ??= state.artifacts.reduce(
     (best, artifact) => Math.max(best, artifact.performance),
@@ -736,6 +741,55 @@ function nearestProcessingStation(
   );
 }
 
+export function controllerBehaviorSignature(controller: Controller): string {
+  return `${controller.sensor}:${controller.action}:${Math.round(controller.threshold * 10)}`;
+}
+
+function hasCompleteSpecification(specification: ArtifactSpecification | undefined): boolean {
+  return Boolean(
+    specification &&
+    specification.name.trim() &&
+    specification.claimedFunction.trim() &&
+    specification.architecture.trim() &&
+    specification.bioInspiration.trim() &&
+    specification.predictedEffects.trim(),
+  );
+}
+
+function sanitizeArtifactSpecification(
+  specification: ArtifactSpecification | undefined,
+): ArtifactSpecification | undefined {
+  if (!hasCompleteSpecification(specification)) return undefined;
+  return {
+    name: specification!.name.trim().slice(0, 40),
+    claimedFunction: specification!.claimedFunction.trim().slice(0, 140),
+    architecture: specification!.architecture.trim().slice(0, 140),
+    bioInspiration: specification!.bioInspiration.trim().slice(0, 100),
+    predictedEffects: specification!.predictedEffects.trim().slice(0, 140),
+  };
+}
+
+export function artifactValidationEvidence(
+  artifact: Artifact,
+  priorArtifacts: readonly Artifact[],
+): NonNullable<Artifact["validation"]> {
+  const signature = controllerBehaviorSignature(artifact.controller);
+  return {
+    testedMaterial:
+      Number.isFinite(artifact.performance) &&
+      artifact.performance >= 0 &&
+      artifact.performance <= 1,
+    completeSpecification: hasCompleteSpecification(artifact.specification),
+    installedAgentController:
+      /^A\d{3}$/u.test(artifact.creatorId) && artifact.controller.revision >= 1,
+    performanceThreshold: artifact.performance >= 0.57,
+    processProvenance: Boolean(artifact.stationId && artifact.process),
+    behaviorallyNovel: !priorArtifacts.some(
+      (candidate) => controllerBehaviorSignature(candidate.controller) === signature,
+    ),
+  };
+}
+
 export function controllerBehaviorDiffers(parent: Controller, child: Controller): boolean {
   return (
     parent.sensor !== child.sensor ||
@@ -814,7 +868,8 @@ function build(agent: Agent, state: WorldState, rng: Rng): boolean {
   const controller = controllerFor(agent, canFork ? parent : undefined, rng);
   const generation = canFork ? parent.generation + 1 : 1;
   const id = `T${String(state.tick).padStart(6, "0")}-${agent.id}`;
-  const name = `${rng.pick(artifactWords[material])} ${rng.pick(formWords)}`;
+  const specification = sanitizeArtifactSpecification(agent.directive.artifactSpecification);
+  const name = specification?.name ?? `${rng.pick(artifactWords[material])} ${rng.pick(formWords)}`;
   const performance = artifactPerformance(
     material,
     controller,
@@ -838,6 +893,7 @@ function build(agent: Agent, state: WorldState, rng: Rng): boolean {
     controller,
     stationId: station.id,
     process: station.kind,
+    specification,
     storedWater: 0,
     reserve: INITIAL_ARTIFACT_RESERVE,
     flux: {
@@ -849,8 +905,10 @@ function build(agent: Agent, state: WorldState, rng: Rng): boolean {
     fluxTrackingStartedTick: state.tick,
     builtAt: state.tick,
     uses: 0,
-    validated: performance >= 0.57,
+    validated: false,
   };
+  artifact.validation = artifactValidationEvidence(artifact, state.artifacts);
+  artifact.validated = Object.values(artifact.validation).every(Boolean);
   state.discoveryFrontierPerformance = Math.max(state.discoveryFrontierPerformance, performance);
   agent.inventory[material] -= 5;
   agent.inventory.water -= 1.5;
@@ -1218,6 +1276,10 @@ export function applyDirective(
     actionId,
     icon,
     actionProposal: undefined,
+    artifactSpecification:
+      committedGoal === "build"
+        ? sanitizeArtifactSpecification(directive.artifactSpecification)
+        : undefined,
     note: directive.note.slice(0, 120),
     speech: directive.speech ? normalizeSpeech(directive.speech) : undefined,
   };

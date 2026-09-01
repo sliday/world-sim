@@ -4,9 +4,11 @@ import { modelActionPrimitives, registerAction } from "./action-sandbox";
 import {
   advanceWorld,
   applyDirective,
+  artifactValidationEvidence,
   balancedPortfolioScore,
   calculateMetrics,
   controllerBehaviorDiffers,
+  controllerBehaviorSignature,
   createInitialWorld,
   decisionAgentsDue,
   decisionPhaseForAgent,
@@ -421,6 +423,13 @@ describe("deterministic consequence layer", () => {
       goal: "build",
       targetMaterial: "fungus",
       actionId: "fabricate",
+      artifactSpecification: {
+        name: "Mycelial Assay Veil",
+        claimedFunction: "Reduce local contamination while preserving exchange.",
+        architecture: "Layered porous fungal membrane with bounded channels.",
+        bioInspiration: "mycelial transport networks",
+        predictedEffects: "Lower contamination near the installed material system.",
+      },
     };
     agent.script = {
       ...agent.script,
@@ -449,6 +458,15 @@ describe("deterministic consequence layer", () => {
     const artifact = world.artifacts.at(-1)!;
     expect(artifact.stationId).toBe(station.id);
     expect(artifact.process).toBe("assay");
+    expect(artifact.name).toBe("Mycelial Assay Veil");
+    expect(artifact.validation).toMatchObject({
+      testedMaterial: true,
+      completeSpecification: true,
+      installedAgentController: true,
+      processProvenance: true,
+      behaviorallyNovel: true,
+    });
+    expect(artifact.validated).toBe(artifact.performance >= 0.57);
     expect(artifact.x).toBe(station.x);
     expect(artifact.y).toBe(station.y);
     expect(agent.inventory.fungus).toBe(5);
@@ -681,6 +699,42 @@ describe("deterministic consequence layer", () => {
     );
   });
 
+  it("requires complete evidence and genuinely new controller behavior for validation", () => {
+    const prior = fluxArtifact("remediate");
+    prior.controller.threshold = 0.43;
+    const candidate = fluxArtifact("remediate");
+    candidate.id = "candidate";
+    candidate.controller.threshold = 0.44;
+    candidate.stationId = "S4";
+    candidate.process = "foundry";
+    candidate.performance = 0.7;
+    candidate.specification = {
+      name: "Basalt Remediation Veil",
+      claimedFunction: "Reduce contamination around the installed material.",
+      architecture: "Layered mineral lattice with bounded exchange channels.",
+      bioInspiration: "porous volcanic microbial mats",
+      predictedEffects: "Lower local contamination while retaining structural service.",
+    };
+
+    expect(controllerBehaviorSignature(candidate.controller)).toBe(
+      controllerBehaviorSignature(prior.controller),
+    );
+    expect(artifactValidationEvidence(candidate, [prior])).toMatchObject({
+      testedMaterial: true,
+      completeSpecification: true,
+      installedAgentController: true,
+      performanceThreshold: true,
+      processProvenance: true,
+      behaviorallyNovel: false,
+    });
+
+    candidate.controller.threshold = 0.61;
+    expect(controllerBehaviorSignature(candidate.controller)).not.toBe(
+      controllerBehaviorSignature(prior.controller),
+    );
+    expect(Object.values(artifactValidationEvidence(candidate, [prior])).every(Boolean)).toBe(true);
+  });
+
   it("balances portfolio magnitude against its weakest service", () => {
     expect(balancedPortfolioScore([1, 1, 1])).toBe(1);
     expect(balancedPortfolioScore([1, 0])).toBe(0.25);
@@ -792,7 +846,7 @@ describe("deterministic consequence layer", () => {
     delete legacy.agents[37]!.materialPurposes;
 
     ensureAgentOperatingSystem(world);
-    expect(world.version).toBe(5);
+    expect(world.version).toBe(6);
     expect(agent.directive).toEqual(directive);
     expect(agent.script).toEqual(script);
     expect(agent.decisionPhase).toBe(decisionPhaseForAgent(agent.id));
@@ -807,7 +861,7 @@ describe("deterministic consequence layer", () => {
     );
   });
 
-  it("starts schema-v5 artifact flux ledgers without inventing pre-migration operation history", () => {
+  it("starts artifact flux and strict validation evidence without inventing history", () => {
     const world = createInitialWorld(14, 0);
     world.tick = 137;
     world.artifacts.push({
@@ -832,7 +886,7 @@ describe("deterministic consequence layer", () => {
     ensureAgentOperatingSystem(world);
     const artifact = world.artifacts[0]!;
 
-    expect(world.version).toBe(5);
+    expect(world.version).toBe(6);
     expect(artifact.storedWater).toBe(0);
     expect(artifact.reserve).toBe(1.5);
     expect(artifact.flux).toEqual({
@@ -842,6 +896,15 @@ describe("deterministic consequence layer", () => {
       maintenanceInput: 0,
     });
     expect(artifact.fluxTrackingStartedTick).toBe(137);
+    expect(artifact.validation).toEqual({
+      testedMaterial: true,
+      completeSpecification: false,
+      installedAgentController: true,
+      performanceThreshold: true,
+      processProvenance: false,
+      behaviorallyNovel: true,
+    });
+    expect(artifact.validated).toBe(false);
   });
 
   it("canonicalizes and caps a full legacy action library without evicting base actions", () => {

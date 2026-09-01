@@ -163,7 +163,7 @@ app.innerHTML = `
         <div>
           <p class="eyebrow">THE RESEARCH</p>
           <h2>INSPIRED BY SWARMWORLD</h2>
-          <p>This is a live implementation track toward SwarmWorld’s core mechanics—not a reproduction of its reported results. It now runs the paper’s long-horizon population size of 100 with one-second world decisions, local observations, memory, communication, persistent artifacts, executable inheritance, and trajectory statistics. “Valid artifact” currently means passing this world’s local performance threshold; “live portfolio” is a present-world diversity and health heuristic. Neither is the paper’s stricter validated-invention count or agent-free held-out resilience assay. Mechanism ablations, matched isolated-search controls, and agent-free held-out disturbance assays remain the next fidelity gates.</p>
+          <p>This is a live implementation track toward SwarmWorld’s core mechanics—not a reproduction of its reported results. It runs 100 agents with local observations, memory, communication, persistent artifacts, executable inheritance, trajectory statistics, and an agent-free eight-schedule held-out assay. A strictly validated invention must now pass six recorded gates: tested material, complete agent-authored specification, installed controller, processing provenance, threshold performance, and behavioral novelty. Legacy threshold-only artifacts remain provisional. Matched mechanism ablations and isolated-search controls remain outstanding.</p>
         </div>
         <a class="paper-link" href="https://arxiv.org/abs/2608.26081" target="_blank" rel="noreferrer"><i class="hn hn-book"></i><span>READ THE PREPRINT<small>Pal, Wang & Buehler · MIT · 2026</small></span><i class="hn hn-external-link"></i></a>
       </div>
@@ -470,11 +470,16 @@ function renderRecentArtifacts(snapshot: PublicWorldSnapshot): void {
     artifacts
       .map((artifact) => {
         const age = formatTickAge(snapshot.tick, artifact.builtAt);
+        const failedValidation = Object.entries(artifact.validation ?? {})
+          .filter(([, passed]) => !passed)
+          .map(([gate]) => gate.replace(/([a-z])([A-Z])/gu, "$1 $2").toUpperCase());
         return `<article class="recent-artifact ${age.isNew ? "new" : ""}">
           <header><strong>${escapeHtml(artifact.name)}</strong>${freshnessMarkup(snapshot.tick, artifact.builtAt)}</header>
-          <div>${materialChip(artifact.material)}<span>GEN ${artifact.generation}</span><span>${artifact.process ? `${escapeHtml(artifact.process.toUpperCase())} · ${escapeHtml(artifact.stationId ?? "STATION")}` : "LEGACY PROCESS UNRECORDED"}</span><span>${artifact.validated ? "VALIDATED" : "PROVISIONAL"}</span></div>
+          <div>${materialChip(artifact.material)}<span>GEN ${artifact.generation}</span><span>${artifact.process ? `${escapeHtml(artifact.process.toUpperCase())} · ${escapeHtml(artifact.stationId ?? "STATION")}` : "LEGACY PROCESS UNRECORDED"}</span><span>${artifact.validated ? "STRICTLY VALIDATED" : "PROVISIONAL"}</span></div>
+          ${artifact.specification ? `<p>${escapeHtml(artifact.specification.claimedFunction)}<br>${escapeHtml(artifact.specification.architecture)} · INSPIRED BY ${escapeHtml(artifact.specification.bioInspiration)}</p>` : ""}
           <p>${Math.round(artifact.performance * 100)}% PERFORMANCE · ${Math.round(artifact.health * 100)}% HEALTH</p>
           <p>STORE ${artifact.storedWater?.toFixed(1) ?? "0.0"} WATER · RESERVE ${artifact.reserve?.toFixed(1) ?? "0.0"}<br>FLOW ${artifact.flux?.waterCollected.toFixed(1) ?? "0.0"} CAPTURED · ${artifact.flux?.contaminationRemoved.toFixed(1) ?? "0.0"} REMOVED · ${artifact.flux?.reserveConsumed.toFixed(1) ?? "0.0"} RESERVE USED</p>
+          <small>${artifact.validated ? "ALL 6 VALIDATION GATES PASSED" : `MISSING ${failedValidation.join(" · ") || "VALIDATION EVIDENCE"}`}</small>
           <small>BUILT T${artifact.builtAt.toLocaleString()} · ${escapeHtml(artifact.creatorId)} · ${artifact.uses.toLocaleString()} USES</small>
         </article>`;
       })
@@ -494,6 +499,8 @@ function craftTreeProjectionSignature(
       artifact.validated,
       artifact.process,
       artifact.stationId,
+      artifact.specification,
+      artifact.validation,
       artifact.storedWater?.toFixed(1),
       artifact.reserve?.toFixed(1),
       artifact.flux?.waterCollected.toFixed(1),
