@@ -1407,13 +1407,20 @@ a:focus-visible {
   border-bottom: 2px solid var(--acid);
 }
 
-.craft-branch > header > span {
+.craft-branch > header > span:first-child {
   grid-row: 1 / 3;
   color: var(--acid);
   font-size: 12px;
 }
 
+.craft-branch > header .craft-material {
+  grid-column: 2;
+  grid-row: 1;
+}
+
 .craft-branch > header small {
+  grid-column: 2;
+  grid-row: 2;
   color: rgba(242, 237, 207, 0.74);
   font-size: 12px;
   letter-spacing: 0.08em;
