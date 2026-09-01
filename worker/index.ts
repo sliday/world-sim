@@ -699,6 +699,9 @@ export class WorldRoom extends DurableObject<Env> {
         maintenanceInput: metrics.maintenanceMaterialInput,
       },
       strictlyValidatedInventions: metrics.validatedInventions,
+      serviceVerifiedArtifacts: world.artifacts.filter(
+        (artifact) => (artifact.serviceInspectedBy?.length ?? 0) > 0,
+      ).length,
       livePortfolioResilience: metrics.portfolioResilience,
       serviceTrackingStartedTick: Math.min(
         world.tick,

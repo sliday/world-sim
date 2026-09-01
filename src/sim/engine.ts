@@ -261,7 +261,7 @@ export function createInitialWorld(seed = 260826081, now = Date.now()): WorldSta
   const rng = new Rng(seed);
   const terrain = createTerrain(seed);
   const state: WorldState = {
-    version: 7,
+    version: 8,
     seed,
     rngState: rng.snapshot,
     tick: 0,
@@ -290,7 +290,7 @@ export function createInitialWorld(seed = 260826081, now = Date.now()): WorldSta
 }
 
 export function ensureAgentOperatingSystem(state: WorldState): WorldState {
-  state.version = 7;
+  state.version = 8;
   state.actionLibrary ??= [];
   const aliases = normalizeActionLibrary(state.actionLibrary);
   state.messages ??= [];
@@ -309,7 +309,13 @@ export function ensureAgentOperatingSystem(state: WorldState): WorldState {
       maintenanceInput: 0,
     };
     artifact.fluxTrackingStartedTick ??= state.tick;
-    artifact.validation ??= artifactValidationEvidence(artifact, priorArtifacts);
+    artifact.serviceInspectedBy ??= [];
+    artifact.validation = {
+      ...artifactValidationEvidence(artifact, priorArtifacts),
+      ...artifact.validation,
+      serviceObserved:
+        artifact.validation?.serviceObserved ?? artifact.serviceInspectedBy.length > 0,
+    };
     artifact.validated = Object.values(artifact.validation).every(Boolean);
     artifact.lastService ??= 0;
     artifact.serviceEma ??= 0;
@@ -794,6 +800,7 @@ export function artifactValidationEvidence(
     behaviorallyNovel: !priorArtifacts.some(
       (candidate) => controllerBehaviorSignature(candidate.controller) === signature,
     ),
+    serviceObserved: (artifact.serviceInspectedBy?.length ?? 0) > 0,
   };
 }
 
@@ -901,6 +908,7 @@ function build(agent: Agent, state: WorldState, rng: Rng): boolean {
     stationId: station.id,
     process: station.kind,
     specification,
+    serviceInspectedBy: [],
     lastService: 0,
     serviceEma: 0,
     serviceIntegral: 0,
@@ -951,6 +959,24 @@ function inspectOrMaintain(agent: Agent, state: WorldState, rng: Rng, repair: bo
   agent.artifactsTouched += 1;
   if (agent.id !== artifact.creatorId && !artifact.adopters.includes(agent.id))
     artifact.adopters.push(agent.id);
+  if (
+    !repair &&
+    agent.id !== artifact.creatorId &&
+    artifact.lastService! > 0 &&
+    !artifact.serviceInspectedBy!.includes(agent.id)
+  ) {
+    artifact.serviceInspectedBy!.push(agent.id);
+    artifact.serviceInspectionTick ??= state.tick;
+    artifact.validation!.serviceObserved = true;
+    artifact.validated = Object.values(artifact.validation!).every(Boolean);
+    addEvent(
+      state,
+      "discovery",
+      `${agent.name} measured ${artifact.name} service${artifact.validated ? " · strictly validated" : ""}`,
+      artifact.x,
+      artifact.y,
+    );
+  }
   if (repair && agent.inventory.water >= 0.2) {
     artifact.health = Math.min(1, artifact.health + 0.055);
     agent.inventory.water -= 0.2;

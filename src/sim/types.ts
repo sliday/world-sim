@@ -219,7 +219,10 @@ export interface Artifact {
     performanceThreshold: boolean;
     processProvenance: boolean;
     behaviorallyNovel: boolean;
+    serviceObserved: boolean;
   };
+  serviceInspectedBy?: string[];
+  serviceInspectionTick?: number;
   lastService?: number;
   serviceEma?: number;
   serviceIntegral?: number;
@@ -288,7 +291,7 @@ export interface WorldMetrics {
 }
 
 export interface WorldState {
-  version: 7;
+  version: 8;
   seed: number;
   rngState: number;
   tick: number;

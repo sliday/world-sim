@@ -163,7 +163,7 @@ app.innerHTML = `
         <div>
           <p class="eyebrow">THE RESEARCH</p>
           <h2>INSPIRED BY SWARMWORLD</h2>
-          <p>This is a live implementation track toward SwarmWorld’s core mechanics—not a reproduction of its reported results. It runs 100 agents with local observations, memory, communication, persistent artifacts, executable inheritance, trajectory statistics, and an agent-free eight-schedule held-out assay. A strictly validated invention must now pass six recorded gates: tested material, complete agent-authored specification, installed controller, processing provenance, threshold performance, and behavioral novelty. Legacy threshold-only artifacts remain provisional. Matched mechanism ablations and isolated-search controls remain outstanding.</p>
+          <p>This is a live implementation track toward SwarmWorld’s core mechanics—not a reproduction of its reported results. It runs 100 agents with local observations, memory, communication, persistent artifacts, executable inheritance, trajectory statistics, and an agent-free eight-schedule held-out assay. A strictly validated invention must pass seven recorded gates: tested material, complete agent-authored specification, installed controller, processing provenance, threshold performance, behavioral novelty, and physical inspection of realized service by another agent. Legacy threshold-only artifacts remain provisional. Matched mechanism ablations and isolated-search controls remain outstanding.</p>
         </div>
         <a class="paper-link" href="https://arxiv.org/abs/2608.26081" target="_blank" rel="noreferrer"><i class="hn hn-book"></i><span>READ THE PREPRINT<small>Pal, Wang & Buehler · MIT · 2026</small></span><i class="hn hn-external-link"></i></a>
       </div>
@@ -479,8 +479,9 @@ function renderRecentArtifacts(snapshot: PublicWorldSnapshot): void {
           ${artifact.specification ? `<p>${escapeHtml(artifact.specification.claimedFunction)}<br>${escapeHtml(artifact.specification.architecture)} · INSPIRED BY ${escapeHtml(artifact.specification.bioInspiration)}</p>` : ""}
           <p>${Math.round(artifact.performance * 100)}% PERFORMANCE · ${Math.round(artifact.health * 100)}% HEALTH</p>
           <p>REALIZED SERVICE ${Math.round((artifact.lastService ?? 0) * 100)}% NOW · ${Math.round((artifact.serviceEma ?? 0) * 100)}% RECENT<br>${artifact.serviceObservedTicks ? (((artifact.serviceIntegral ?? 0) / artifact.serviceObservedTicks) * 100).toFixed(1) : "0.0"} SERVICE UNITS / 100 TRACKED TICKS</p>
+          <p>SERVICE INSPECTED BY ${artifact.serviceInspectedBy?.length ?? 0} AGENTS${artifact.serviceInspectionTick ? ` · FIRST T${artifact.serviceInspectionTick.toLocaleString()}` : ""}</p>
           <p>STORE ${artifact.storedWater?.toFixed(1) ?? "0.0"} WATER · RESERVE ${artifact.reserve?.toFixed(1) ?? "0.0"}<br>FLOW ${artifact.flux?.waterCollected.toFixed(1) ?? "0.0"} CAPTURED · ${artifact.flux?.contaminationRemoved.toFixed(1) ?? "0.0"} REMOVED · ${artifact.flux?.reserveConsumed.toFixed(1) ?? "0.0"} RESERVE USED</p>
-          <small>${artifact.validated ? "ALL 6 VALIDATION GATES PASSED" : `MISSING ${failedValidation.join(" · ") || "VALIDATION EVIDENCE"}`}</small>
+          <small>${artifact.validated ? "ALL 7 VALIDATION GATES PASSED" : `MISSING ${failedValidation.join(" · ") || "VALIDATION EVIDENCE"}`}</small>
           <small>BUILT T${artifact.builtAt.toLocaleString()} · ${escapeHtml(artifact.creatorId)} · ${artifact.uses.toLocaleString()} USES</small>
         </article>`;
       })
@@ -502,6 +503,8 @@ function craftTreeProjectionSignature(
       artifact.stationId,
       artifact.specification,
       artifact.validation,
+      artifact.serviceInspectedBy,
+      artifact.serviceInspectionTick,
       artifact.lastService?.toFixed(2),
       artifact.serviceEma?.toFixed(2),
       artifact.serviceIntegral?.toFixed(1),

@@ -466,8 +466,9 @@ describe("deterministic consequence layer", () => {
       installedAgentController: true,
       processProvenance: true,
       behaviorallyNovel: true,
+      serviceObserved: false,
     });
-    expect(artifact.validated).toBe(artifact.performance >= 0.57);
+    expect(artifact.validated).toBe(false);
     expect(artifact.x).toBe(station.x);
     expect(artifact.y).toBe(station.y);
     expect(agent.inventory.fungus).toBe(5);
@@ -552,6 +553,57 @@ describe("deterministic consequence layer", () => {
     advanceWorld(world, 1);
     expect(world.terrain[0]!.contamination).toBe(exhaustedContamination);
     expect(artifact.lastService).toBe(0);
+  });
+
+  it("requires a non-creator inspection of realized service for final validation", () => {
+    const makeWorld = (
+      storedWater: number,
+    ): { world: WorldState; artifact: Artifact; inspectorId: string } => {
+      const world = createInitialWorld(260826081, 0);
+      const artifact = fluxArtifact("collect-water");
+      artifact.performance = 0.7;
+      artifact.stationId = "S4";
+      artifact.process = "foundry";
+      artifact.storedWater = storedWater;
+      artifact.specification = {
+        name: "Measured Water Veil",
+        claimedFunction: "Transfer local moisture into bounded artifact storage.",
+        architecture: "Layered mineral channels surrounding a finite reservoir.",
+        bioInspiration: "plant vascular storage",
+        predictedEffects: "Increase stored water only when local moisture is available.",
+      };
+      world.artifacts = [artifact];
+      world.terrain[0]!.moisture = 0.8;
+      world.terrain[0]!.contamination = 0.5;
+      const inspector = world.agents[1]!;
+      inspector.x = 0;
+      inspector.y = 0;
+      inspector.script = {
+        ...inspector.script,
+        actionId: "study",
+        program: ["inspect-local"],
+      };
+      inspector.scriptCursor = 0;
+      return { world, artifact, inspectorId: inspector.id };
+    };
+
+    const active = makeWorld(0);
+    advanceWorld(active.world, 1);
+    expect(active.artifact.lastService).toBeGreaterThan(0);
+    expect(active.artifact.serviceInspectedBy).toEqual([active.inspectorId]);
+    expect(active.artifact.serviceInspectionTick).toBe(1);
+    expect(active.artifact.validation?.serviceObserved).toBe(true);
+    expect(active.artifact.validated).toBe(true);
+    expect(active.world.events.some((event) => event.text.includes("strictly validated"))).toBe(
+      true,
+    );
+
+    const capacityLimited = makeWorld(2);
+    advanceWorld(capacityLimited.world, 1);
+    expect(capacityLimited.artifact.lastService).toBe(0);
+    expect(capacityLimited.artifact.serviceInspectedBy).toEqual([]);
+    expect(capacityLimited.artifact.validation?.serviceObserved).toBe(false);
+    expect(capacityLimited.artifact.validated).toBe(false);
   });
 
   it("redirects saturated water gathering toward diverse material deficits", () => {
@@ -738,9 +790,11 @@ describe("deterministic consequence layer", () => {
       performanceThreshold: true,
       processProvenance: true,
       behaviorallyNovel: false,
+      serviceObserved: false,
     });
 
     candidate.controller.threshold = 0.61;
+    candidate.serviceInspectedBy = ["A002"];
     expect(controllerBehaviorSignature(candidate.controller)).not.toBe(
       controllerBehaviorSignature(prior.controller),
     );
@@ -858,7 +912,7 @@ describe("deterministic consequence layer", () => {
     delete legacy.agents[37]!.materialPurposes;
 
     ensureAgentOperatingSystem(world);
-    expect(world.version).toBe(7);
+    expect(world.version).toBe(8);
     expect(agent.directive).toEqual(directive);
     expect(agent.script).toEqual(script);
     expect(agent.decisionPhase).toBe(decisionPhaseForAgent(agent.id));
@@ -898,7 +952,7 @@ describe("deterministic consequence layer", () => {
     ensureAgentOperatingSystem(world);
     const artifact = world.artifacts[0]!;
 
-    expect(world.version).toBe(7);
+    expect(world.version).toBe(8);
     expect(artifact.storedWater).toBe(0);
     expect(artifact.reserve).toBe(1.5);
     expect(artifact.flux).toEqual({
@@ -920,8 +974,10 @@ describe("deterministic consequence layer", () => {
       performanceThreshold: true,
       processProvenance: false,
       behaviorallyNovel: true,
+      serviceObserved: false,
     });
     expect(artifact.validated).toBe(false);
+    expect(artifact.serviceInspectedBy).toEqual([]);
   });
 
   it("canonicalizes and caps a full legacy action library without evicting base actions", () => {
