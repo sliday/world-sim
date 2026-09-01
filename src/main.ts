@@ -128,7 +128,7 @@ app.innerHTML = `
         </div>
       </section>
       <section class="recent-artifacts">
-        <header><div><span>RECENT PHYSICAL OUTPUTS</span><strong>ARTIFACTS</strong></div><small>NEWEST 8 · AUTHORITATIVE WORLD AGE</small></header>
+        <header><div><strong>ARTIFACTS</strong><span>Recent physical outputs</span></div><small>Newest 8 · authoritative world age</small></header>
         <div id="recent-artifact-list" class="recent-artifact-list"></div>
       </section>
       <p id="craft-tree-announcement" class="sr-only" aria-live="polite"></p>
