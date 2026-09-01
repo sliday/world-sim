@@ -472,25 +472,25 @@ function renderRecentArtifacts(snapshot: PublicWorldSnapshot): void {
         const age = formatTickAge(snapshot.tick, artifact.builtAt);
         const failedValidation = Object.entries(artifact.validation ?? {})
           .filter(([, passed]) => !passed)
-          .map(([gate]) => gate.replace(/([a-z])([A-Z])/gu, "$1 $2").toUpperCase());
+          .map(([gate]) => gate.replace(/([a-z])([A-Z])/gu, "$1 $2").toLowerCase());
         return `<article class="recent-artifact ${age.isNew ? "new" : ""}">
           <header><strong>${escapeHtml(artifact.name)}</strong>${freshnessMarkup(snapshot.tick, artifact.builtAt)}</header>
-          <div>${materialChip(artifact.material)}<span>GEN ${artifact.generation}</span><span>${artifact.process ? `${escapeHtml(artifact.process.toUpperCase())} · ${escapeHtml(artifact.stationId ?? "STATION")}` : "LEGACY PROCESS UNRECORDED"}</span><span>${artifact.validated ? "STRICTLY VALIDATED" : "PROVISIONAL"}</span></div>
-          ${artifact.specification ? `<p>${escapeHtml(artifact.specification.claimedFunction)}<br>${escapeHtml(artifact.specification.architecture)} · INSPIRED BY ${escapeHtml(artifact.specification.bioInspiration)}</p>` : ""}
+          <div>${materialChip(artifact.material)}<span>Gen ${artifact.generation}</span><span>${artifact.process ? `${escapeHtml(artifact.process)} · ${escapeHtml(artifact.stationId ?? "station")}` : "Legacy process unrecorded"}</span><span>${artifact.validated ? "Strictly validated" : "Provisional"}</span></div>
+          ${artifact.specification ? `<p>${escapeHtml(artifact.specification.claimedFunction)}<br>${escapeHtml(artifact.specification.architecture)} · inspired by ${escapeHtml(artifact.specification.bioInspiration)}</p>` : ""}
           <dl class="artifact-stats">
-            <dt>PERFORMANCE</dt><dd>${Math.round(artifact.performance * 100)}%</dd>
-            <dt>HEALTH</dt><dd>${Math.round(artifact.health * 100)}%</dd>
-            <dt>SERVICE NOW · RECENT</dt><dd>${Math.round((artifact.lastService ?? 0) * 100)}% · ${Math.round((artifact.serviceEma ?? 0) * 100)}%</dd>
-            <dt>UNITS / 100 TICKS</dt><dd>${artifact.serviceObservedTicks ? (((artifact.serviceIntegral ?? 0) / artifact.serviceObservedTicks) * 100).toFixed(1) : "0.0"}</dd>
-            <dt>INSPECTED BY</dt><dd>${artifact.serviceInspectedBy?.length ?? 0} AGENTS${artifact.serviceInspectionTick ? ` · T${artifact.serviceInspectionTick.toLocaleString()}` : ""}</dd>
-            <dt>STORE · RESERVE</dt><dd>${artifact.storedWater?.toFixed(1) ?? "0.0"} · ${artifact.reserve?.toFixed(1) ?? "0.0"}</dd>
-            <dt>FLOW CAP · REM · USED</dt><dd>${artifact.flux?.waterCollected.toFixed(1) ?? "0.0"} · ${artifact.flux?.contaminationRemoved.toFixed(1) ?? "0.0"} · ${artifact.flux?.reserveConsumed.toFixed(1) ?? "0.0"}</dd>
+            <dt>Performance</dt><dd>${Math.round(artifact.performance * 100)}%</dd>
+            <dt>Health</dt><dd>${Math.round(artifact.health * 100)}%</dd>
+            <dt>Service now · recent</dt><dd>${Math.round((artifact.lastService ?? 0) * 100)}% · ${Math.round((artifact.serviceEma ?? 0) * 100)}%</dd>
+            <dt>Units / 100 ticks</dt><dd>${artifact.serviceObservedTicks ? (((artifact.serviceIntegral ?? 0) / artifact.serviceObservedTicks) * 100).toFixed(1) : "0.0"}</dd>
+            <dt>Inspected by</dt><dd>${artifact.serviceInspectedBy?.length ?? 0} agents${artifact.serviceInspectionTick ? ` · T${artifact.serviceInspectionTick.toLocaleString()}` : ""}</dd>
+            <dt>Store · reserve</dt><dd>${artifact.storedWater?.toFixed(1) ?? "0.0"} · ${artifact.reserve?.toFixed(1) ?? "0.0"}</dd>
+            <dt>Flow cap · rem · used</dt><dd>${artifact.flux?.waterCollected.toFixed(1) ?? "0.0"} · ${artifact.flux?.contaminationRemoved.toFixed(1) ?? "0.0"} · ${artifact.flux?.reserveConsumed.toFixed(1) ?? "0.0"}</dd>
           </dl>
-          <small class="${artifact.validated ? "" : "warn"}">${artifact.validated ? "ALL 7 VALIDATION GATES PASSED" : `MISSING ${failedValidation.join(" · ") || "VALIDATION EVIDENCE"}`}</small>
-          <small>BUILT T${artifact.builtAt.toLocaleString()} · ${escapeHtml(artifact.creatorId)} · ${artifact.uses.toLocaleString()} USES</small>
+          <small class="${artifact.validated ? "" : "warn"}">${artifact.validated ? "All 7 validation gates passed" : `Missing ${failedValidation.join(" · ") || "validation evidence"}`}</small>
+          <small>Built T${artifact.builtAt.toLocaleString()} · ${escapeHtml(artifact.creatorId)} · ${artifact.uses.toLocaleString()} uses</small>
         </article>`;
       })
-      .join("") || '<p class="craft-empty">NO PHYSICAL ARTIFACTS YET</p>';
+      .join("") || '<p class="craft-empty">No physical artifacts yet</p>';
 }
 
 function craftTreeProjectionSignature(

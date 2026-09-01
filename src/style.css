@@ -2310,7 +2310,7 @@ a:focus-visible {
 /* Artifact card IA: dim labels left, bright tabular values right */
 .artifact-stats {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: 1fr auto;
   gap: 5px 12px;
   margin: 12px 0 0;
 }
@@ -2318,12 +2318,12 @@ a:focus-visible {
 .artifact-stats dt {
   color: rgba(242, 237, 207, 0.55);
   font-size: 11px;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.02em;
 }
 
 .artifact-stats dd {
   margin: 0;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
   text-align: right;
   color: var(--cream);
   font-size: 12px;
