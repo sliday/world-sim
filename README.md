@@ -44,6 +44,8 @@ There is one explicit product-driven variation from Algorithm 1: SwarmWorld cons
 
 The hourly world diary is an observer layer over Algorithm 1's `AppendTrace`, not agent memory or an authoritative consequence. Raw notable events are persisted between diary checkpoints; the model may organize only supplied evidence, and diary failure never blocks world time. Tracking begins at migration, so the first entry does not fabricate earlier history.
 
+`GET /api/held-out-assay` freezes the current world into eight exact clones, removes all agents, applies deterministic paired schedules seeded 9201–9208 across 288 evaluation ticks, and reports balanced service coverage per schedule plus the mean. The assay never mutates the discovery world. Its disturbance implementation follows the paper's contamination, drought, damage, and resource-variation structure, but remains this observatory's explicit adaptation rather than a reproduction of the authors' unpublished schedule payloads.
+
 Crafting borrows Infinite Craft's legible pairwise-combination loop, but not its unconstrained ontology. A Creative Session may propose a material pair and a reusable program only from the typed action DSL. The host records that proposal as a physical commitment, seeks missing ingredients, and registers the skill only after both ingredients are consumed. Duplicate or invalid mixes consume the attempt without satisfying curiosity. Successful recipes become craftable knowledge that another agent can reproduce from the same materials. This preserves SwarmWorld's separation of cognition, transactional validation, deterministic execution, memory, and trace append.
 
 ## Local development

@@ -1107,6 +1107,19 @@ export function advanceWorld(state: WorldState, steps = 1): WorldState {
   return state;
 }
 
+export function advanceAgentFreeWorld(state: WorldState, steps = 1): WorldState {
+  if (state.agents.length) throw new Error("Agent-free advancement requires an empty population");
+  const rng = new Rng(state.rngState);
+  for (let step = 0; step < steps; step += 1) {
+    state.tick += 1;
+    advanceEnvironment(state);
+    advanceArtifacts(state, rng);
+  }
+  state.rngState = rng.snapshot;
+  state.metrics = calculateMetrics(state);
+  return state;
+}
+
 export function applyDirective(
   state: WorldState,
   agentId: string,

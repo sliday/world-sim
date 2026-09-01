@@ -32,6 +32,7 @@ import {
   normalizeWorldDiaryLines,
   WORLD_DIARY_INTERVAL_TICKS,
 } from "../src/sim/world-diary";
+import { runHeldOutAssay } from "../src/sim/held-out-assay";
 import type {
   AgentActionProposal,
   AgentDirective,
@@ -685,7 +686,12 @@ export class WorldRoom extends DurableObject<Env> {
       worldDiaryEntries: this.readWorldDiary(168).length,
       nextWorldDiaryTick: diaryState.nextTick,
       worldDiaryLastError: diaryState.lastError || undefined,
+      heldOutAssayEndpoint: "/api/held-out-assay",
     };
+  }
+
+  async heldOutAssay(): Promise<ReturnType<typeof runHeldOutAssay>> {
+    return runHeldOutAssay(await this.load());
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -1252,6 +1258,8 @@ export default {
     }
     if (url.pathname === "/api/world-diary" && request.method === "GET")
       return json(await world.worldDiary());
+    if (url.pathname === "/api/held-out-assay" && request.method === "GET")
+      return json(await world.heldOutAssay());
     if (url.pathname === "/api/ws") return world.fetch(request);
     if (url.pathname.startsWith("/api/") && request.method !== "GET")
       return json({ error: "Method not allowed" }, { status: 405, headers: { Allow: "GET" } });
