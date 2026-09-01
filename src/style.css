@@ -1330,7 +1330,7 @@ a:focus-visible {
 
 .recent-artifact {
   min-width: 0;
-  padding: 12px;
+  padding: 14px;
   border: 1px solid rgba(242, 237, 207, 0.16);
   background: rgba(242, 237, 207, 0.035);
 }
@@ -1362,9 +1362,9 @@ a:focus-visible {
 .recent-artifact > div {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 10px;
+  gap: 5px 10px;
   align-items: center;
-  margin-top: 13px;
+  margin-top: 12px;
 }
 
 .recent-artifact > div > span {
@@ -1374,7 +1374,7 @@ a:focus-visible {
 }
 
 .recent-artifact p {
-  margin: 12px 0 7px;
+  margin: 12px 0 0;
   color: var(--aqua);
   font-size: 12px;
   letter-spacing: 0.04em;
@@ -2311,13 +2311,14 @@ a:focus-visible {
 .artifact-stats {
   display: grid;
   grid-template-columns: 1fr auto;
-  gap: 5px 12px;
+  gap: 6px 12px;
   margin: 12px 0 0;
 }
 
 .artifact-stats dt {
   color: rgba(242, 237, 207, 0.55);
   font-size: 11px;
+  line-height: 1.35;
   letter-spacing: 0.02em;
 }
 
@@ -2327,6 +2328,7 @@ a:focus-visible {
   text-align: right;
   color: var(--cream);
   font-size: 12px;
+  line-height: 1.35;
   font-weight: 500;
 }
 
@@ -2341,4 +2343,22 @@ a:focus-visible {
 
 .craft-tree-hero h1 {
   text-wrap: balance;
+}
+
+/* Card group rhythm: hairlines between stat groups and footer */
+.artifact-stats + .artifact-stats {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(242, 237, 207, 0.08);
+}
+
+.recent-artifact small {
+  display: block;
+  margin-top: 6px;
+}
+
+.recent-artifact dl + small {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(242, 237, 207, 0.08);
 }

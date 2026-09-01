@@ -480,11 +480,16 @@ function renderRecentArtifacts(snapshot: PublicWorldSnapshot): void {
           <dl class="artifact-stats">
             <dt>Performance</dt><dd>${Math.round(artifact.performance * 100)}%</dd>
             <dt>Health</dt><dd>${Math.round(artifact.health * 100)}%</dd>
+          </dl>
+          <dl class="artifact-stats">
             <dt>Service now · recent</dt><dd>${Math.round((artifact.lastService ?? 0) * 100)}% · ${Math.round((artifact.serviceEma ?? 0) * 100)}%</dd>
             <dt>Units / 100 ticks</dt><dd>${artifact.serviceObservedTicks ? (((artifact.serviceIntegral ?? 0) / artifact.serviceObservedTicks) * 100).toFixed(1) : "0.0"}</dd>
             <dt>Inspected by</dt><dd>${artifact.serviceInspectedBy?.length ?? 0} agents${artifact.serviceInspectionTick ? ` · T${artifact.serviceInspectionTick.toLocaleString()}` : ""}</dd>
+          </dl>
+          <dl class="artifact-stats">
             <dt>Store · reserve</dt><dd>${artifact.storedWater?.toFixed(1) ?? "0.0"} · ${artifact.reserve?.toFixed(1) ?? "0.0"}</dd>
-            <dt>Flow cap · rem · used</dt><dd>${artifact.flux?.waterCollected.toFixed(1) ?? "0.0"} · ${artifact.flux?.contaminationRemoved.toFixed(1) ?? "0.0"} · ${artifact.flux?.reserveConsumed.toFixed(1) ?? "0.0"}</dd>
+            <dt>Flow captured · removed</dt><dd>${artifact.flux?.waterCollected.toFixed(1) ?? "0.0"} · ${artifact.flux?.contaminationRemoved.toFixed(1) ?? "0.0"}</dd>
+            <dt>Reserve used</dt><dd>${artifact.flux?.reserveConsumed.toFixed(1) ?? "0.0"}</dd>
           </dl>
           <small class="${artifact.validated ? "" : "warn"}">${artifact.validated ? "All 7 validation gates passed" : `Missing ${failedValidation.join(" · ") || "validation evidence"}`}</small>
           <small>Built T${artifact.builtAt.toLocaleString()} · ${escapeHtml(artifact.creatorId)} · ${artifact.uses.toLocaleString()} uses</small>
