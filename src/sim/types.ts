@@ -220,6 +220,11 @@ export interface Artifact {
     processProvenance: boolean;
     behaviorallyNovel: boolean;
   };
+  lastService?: number;
+  serviceEma?: number;
+  serviceIntegral?: number;
+  serviceObservedTicks?: number;
+  serviceTrackingStartedTick?: number;
   storedWater?: number;
   reserve?: number;
   flux?: {
@@ -283,7 +288,7 @@ export interface WorldMetrics {
 }
 
 export interface WorldState {
-  version: 6;
+  version: 7;
   seed: number;
   rngState: number;
   tick: number;

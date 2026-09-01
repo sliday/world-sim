@@ -18,6 +18,7 @@ import {
   MODEL_MACROTURN_INTERVAL_TICKS,
   nextScheduledDecisionTick,
   normalizeSpeech,
+  realizedPortfolioScore,
 } from "./engine";
 import { agentNameCatalog, generateAgentName } from "./names";
 import {
@@ -511,10 +512,20 @@ describe("deterministic consequence layer", () => {
     expect(waterAfter).toBeCloseTo(waterBefore, 10);
     expect(artifact.storedWater).toBeGreaterThan(0);
     expect(artifact.flux!.waterCollected).toBeCloseTo(artifact.storedWater!, 10);
+    expect(artifact.lastService).toBeGreaterThan(0);
+    expect(artifact.serviceEma).toBeGreaterThan(0);
+    expect(realizedPortfolioScore(world, false)).toBeGreaterThan(0);
     expect(calculateMetrics(world).operationalWaterCollected).toBeCloseTo(
       artifact.storedWater!,
       10,
     );
+
+    const serviceBeforeCapacity = artifact.serviceEma!;
+    artifact.storedWater = 2;
+    advanceWorld(world, 1);
+    expect(artifact.lastService).toBe(0);
+    expect(artifact.serviceEma).toBeLessThan(serviceBeforeCapacity);
+    expect(realizedPortfolioScore(world, false)).toBe(0);
   });
 
   it("bounds remediation by local contamination and finite embodied reserve", () => {
@@ -540,6 +551,7 @@ describe("deterministic consequence layer", () => {
     const exhaustedContamination = world.terrain[0]!.contamination;
     advanceWorld(world, 1);
     expect(world.terrain[0]!.contamination).toBe(exhaustedContamination);
+    expect(artifact.lastService).toBe(0);
   });
 
   it("redirects saturated water gathering toward diverse material deficits", () => {
@@ -846,7 +858,7 @@ describe("deterministic consequence layer", () => {
     delete legacy.agents[37]!.materialPurposes;
 
     ensureAgentOperatingSystem(world);
-    expect(world.version).toBe(6);
+    expect(world.version).toBe(7);
     expect(agent.directive).toEqual(directive);
     expect(agent.script).toEqual(script);
     expect(agent.decisionPhase).toBe(decisionPhaseForAgent(agent.id));
@@ -886,7 +898,7 @@ describe("deterministic consequence layer", () => {
     ensureAgentOperatingSystem(world);
     const artifact = world.artifacts[0]!;
 
-    expect(world.version).toBe(6);
+    expect(world.version).toBe(7);
     expect(artifact.storedWater).toBe(0);
     expect(artifact.reserve).toBe(1.5);
     expect(artifact.flux).toEqual({
@@ -896,6 +908,11 @@ describe("deterministic consequence layer", () => {
       maintenanceInput: 0,
     });
     expect(artifact.fluxTrackingStartedTick).toBe(137);
+    expect(artifact.lastService).toBe(0);
+    expect(artifact.serviceEma).toBe(0);
+    expect(artifact.serviceIntegral).toBe(0);
+    expect(artifact.serviceObservedTicks).toBe(0);
+    expect(artifact.serviceTrackingStartedTick).toBe(137);
     expect(artifact.validation).toEqual({
       testedMaterial: true,
       completeSpecification: false,

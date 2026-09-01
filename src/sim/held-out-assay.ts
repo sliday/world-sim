@@ -1,4 +1,8 @@
-import { advanceAgentFreeWorld, calculateMetrics, ensureAgentOperatingSystem } from "./engine";
+import {
+  advanceAgentFreeWorld,
+  ensureAgentOperatingSystem,
+  realizedPortfolioScore,
+} from "./engine";
 import { Rng } from "./rng";
 import { WORLD_HEIGHT, WORLD_WIDTH, type WorldState } from "./types";
 
@@ -113,20 +117,20 @@ export function runHeldOutAssay(
     world.agents = [];
     const schedule = createHeldOutSchedule(seed);
     const eventTicks = Math.max(1, Math.ceil(evaluationTicks / schedule.disturbances.length));
-    const initialService = calculateMetrics(world).portfolioResilience;
+    const initialService = realizedPortfolioScore(world, false);
     let serviceArea = 0;
     for (let tick = 0; tick < evaluationTicks; tick += 1) {
       const eventIndex = Math.min(schedule.disturbances.length - 1, Math.floor(tick / eventTicks));
       const phase = ((tick % eventTicks) + 1) / eventTicks;
       applyHeldOutDisturbance(world, schedule.disturbances[eventIndex]!, phase);
       advanceAgentFreeWorld(world, 1);
-      serviceArea += world.metrics.portfolioResilience;
+      serviceArea += realizedPortfolioScore(world, false);
     }
     return {
       seed,
       disturbances: schedule.disturbances,
       initialService,
-      finalService: world.metrics.portfolioResilience,
+      finalService: realizedPortfolioScore(world, false),
       heldOutResilience: evaluationTicks ? serviceArea / evaluationTicks : initialService,
     };
   });

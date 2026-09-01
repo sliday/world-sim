@@ -478,6 +478,7 @@ function renderRecentArtifacts(snapshot: PublicWorldSnapshot): void {
           <div>${materialChip(artifact.material)}<span>GEN ${artifact.generation}</span><span>${artifact.process ? `${escapeHtml(artifact.process.toUpperCase())} · ${escapeHtml(artifact.stationId ?? "STATION")}` : "LEGACY PROCESS UNRECORDED"}</span><span>${artifact.validated ? "STRICTLY VALIDATED" : "PROVISIONAL"}</span></div>
           ${artifact.specification ? `<p>${escapeHtml(artifact.specification.claimedFunction)}<br>${escapeHtml(artifact.specification.architecture)} · INSPIRED BY ${escapeHtml(artifact.specification.bioInspiration)}</p>` : ""}
           <p>${Math.round(artifact.performance * 100)}% PERFORMANCE · ${Math.round(artifact.health * 100)}% HEALTH</p>
+          <p>REALIZED SERVICE ${Math.round((artifact.lastService ?? 0) * 100)}% NOW · ${Math.round((artifact.serviceEma ?? 0) * 100)}% RECENT<br>${artifact.serviceObservedTicks ? (((artifact.serviceIntegral ?? 0) / artifact.serviceObservedTicks) * 100).toFixed(1) : "0.0"} SERVICE UNITS / 100 TRACKED TICKS</p>
           <p>STORE ${artifact.storedWater?.toFixed(1) ?? "0.0"} WATER · RESERVE ${artifact.reserve?.toFixed(1) ?? "0.0"}<br>FLOW ${artifact.flux?.waterCollected.toFixed(1) ?? "0.0"} CAPTURED · ${artifact.flux?.contaminationRemoved.toFixed(1) ?? "0.0"} REMOVED · ${artifact.flux?.reserveConsumed.toFixed(1) ?? "0.0"} RESERVE USED</p>
           <small>${artifact.validated ? "ALL 6 VALIDATION GATES PASSED" : `MISSING ${failedValidation.join(" · ") || "VALIDATION EVIDENCE"}`}</small>
           <small>BUILT T${artifact.builtAt.toLocaleString()} · ${escapeHtml(artifact.creatorId)} · ${artifact.uses.toLocaleString()} USES</small>
@@ -501,6 +502,10 @@ function craftTreeProjectionSignature(
       artifact.stationId,
       artifact.specification,
       artifact.validation,
+      artifact.lastService?.toFixed(2),
+      artifact.serviceEma?.toFixed(2),
+      artifact.serviceIntegral?.toFixed(1),
+      artifact.serviceObservedTicks,
       artifact.storedWater?.toFixed(1),
       artifact.reserve?.toFixed(1),
       artifact.flux?.waterCollected.toFixed(1),

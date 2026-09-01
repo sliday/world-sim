@@ -62,6 +62,8 @@ const CARRIED_WATER_ENERGY = 0.32;
 const PROCESSING_RADIUS_SQUARED = 2;
 const ARTIFACT_STORAGE_CAPACITY = 2;
 const INITIAL_ARTIFACT_RESERVE = 1.5;
+const MAX_ARTIFACT_ACTUATION = 0.018;
+const SERVICE_EMA_ALPHA = 0.08;
 const processingStationForMaterial: Record<MaterialKind, Station["kind"]> = {
   water: "wash",
   fungus: "assay",
@@ -259,7 +261,7 @@ export function createInitialWorld(seed = 260826081, now = Date.now()): WorldSta
   const rng = new Rng(seed);
   const terrain = createTerrain(seed);
   const state: WorldState = {
-    version: 6,
+    version: 7,
     seed,
     rngState: rng.snapshot,
     tick: 0,
@@ -288,7 +290,7 @@ export function createInitialWorld(seed = 260826081, now = Date.now()): WorldSta
 }
 
 export function ensureAgentOperatingSystem(state: WorldState): WorldState {
-  state.version = 6;
+  state.version = 7;
   state.actionLibrary ??= [];
   const aliases = normalizeActionLibrary(state.actionLibrary);
   state.messages ??= [];
@@ -309,6 +311,11 @@ export function ensureAgentOperatingSystem(state: WorldState): WorldState {
     artifact.fluxTrackingStartedTick ??= state.tick;
     artifact.validation ??= artifactValidationEvidence(artifact, priorArtifacts);
     artifact.validated = Object.values(artifact.validation).every(Boolean);
+    artifact.lastService ??= 0;
+    artifact.serviceEma ??= 0;
+    artifact.serviceIntegral ??= 0;
+    artifact.serviceObservedTicks ??= 0;
+    artifact.serviceTrackingStartedTick ??= state.tick;
     priorArtifacts.push(artifact);
   }
   state.discoveryFrontierPerformance ??= state.artifacts.reduce(
@@ -894,6 +901,11 @@ function build(agent: Agent, state: WorldState, rng: Rng): boolean {
     stationId: station.id,
     process: station.kind,
     specification,
+    lastService: 0,
+    serviceEma: 0,
+    serviceIntegral: 0,
+    serviceObservedTicks: 0,
+    serviceTrackingStartedTick: state.tick,
     storedWater: 0,
     reserve: INITIAL_ARTIFACT_RESERVE,
     flux: {
@@ -1083,44 +1095,55 @@ function advanceArtifacts(state: WorldState, rng: Rng): void {
   for (const artifact of state.artifacts) {
     const tile = tileAt(state, artifact.x, artifact.y);
     artifact.health = Math.max(0, artifact.health - 0.0007 - tile.contamination * 0.0009);
-    if (sensorValue(artifact, tile) < artifact.controller.threshold || artifact.health <= 0.05)
-      continue;
-    const strength = artifact.performance * artifact.health * 0.018;
-    const flux = artifact.flux!;
-    if (artifact.controller.action === "collect-water") {
-      const amount = Math.min(
-        strength,
-        tile.moisture,
-        Math.max(0, ARTIFACT_STORAGE_CAPACITY - artifact.storedWater!),
-      );
-      tile.moisture -= amount;
-      artifact.storedWater! += amount;
-      flux.waterCollected += amount;
+    let service = 0;
+    if (sensorValue(artifact, tile) >= artifact.controller.threshold && artifact.health > 0.05) {
+      const strength = artifact.performance * artifact.health * MAX_ARTIFACT_ACTUATION;
+      const flux = artifact.flux!;
+      if (artifact.controller.action === "collect-water") {
+        const amount = Math.min(
+          strength,
+          tile.moisture,
+          Math.max(0, ARTIFACT_STORAGE_CAPACITY - artifact.storedWater!),
+        );
+        tile.moisture -= amount;
+        artifact.storedWater! += amount;
+        flux.waterCollected += amount;
+        service = amount / MAX_ARTIFACT_ACTUATION;
+      }
+      if (artifact.controller.action === "remediate") {
+        const amount = Math.min(strength, tile.contamination, artifact.reserve! * 2);
+        const reserveUsed = amount * 0.5;
+        tile.contamination -= amount;
+        artifact.reserve! -= reserveUsed;
+        flux.contaminationRemoved += amount;
+        flux.reserveConsumed += reserveUsed;
+        service = amount / MAX_ARTIFACT_ACTUATION;
+      }
+      if (artifact.controller.action === "heal") {
+        const amount = Math.min(strength * 0.8, 1 - artifact.health, artifact.reserve!);
+        artifact.health += amount;
+        artifact.reserve! -= amount;
+        flux.reserveConsumed += amount;
+        service = amount / MAX_ARTIFACT_ACTUATION;
+      }
+      if (artifact.controller.action === "grow") {
+        const amount = Math.min(strength * 0.5, 1 - tile.richness, artifact.reserve!);
+        tile.richness += amount;
+        artifact.reserve! -= amount;
+        flux.reserveConsumed += amount;
+        service = amount / MAX_ARTIFACT_ACTUATION;
+      }
+      if (artifact.controller.action === "signal" && rng.chance(0.03)) {
+        const agent = nearest(artifact, state.agents);
+        if (agent) agent.script.lastResult = `received signal from ${artifact.id}`;
+        service = 1;
+      }
     }
-    if (artifact.controller.action === "remediate") {
-      const amount = Math.min(strength, tile.contamination, artifact.reserve! * 2);
-      const reserveUsed = amount * 0.5;
-      tile.contamination -= amount;
-      artifact.reserve! -= reserveUsed;
-      flux.contaminationRemoved += amount;
-      flux.reserveConsumed += reserveUsed;
-    }
-    if (artifact.controller.action === "heal") {
-      const amount = Math.min(strength * 0.8, 1 - artifact.health, artifact.reserve!);
-      artifact.health += amount;
-      artifact.reserve! -= amount;
-      flux.reserveConsumed += amount;
-    }
-    if (artifact.controller.action === "grow") {
-      const amount = Math.min(strength * 0.5, 1 - tile.richness, artifact.reserve!);
-      tile.richness += amount;
-      artifact.reserve! -= amount;
-      flux.reserveConsumed += amount;
-    }
-    if (artifact.controller.action === "signal" && rng.chance(0.03)) {
-      const agent = nearest(artifact, state.agents);
-      if (agent) agent.script.lastResult = `received signal from ${artifact.id}`;
-    }
+    artifact.lastService = Math.max(0, Math.min(1, service));
+    artifact.serviceEma =
+      artifact.serviceEma! * (1 - SERVICE_EMA_ALPHA) + artifact.lastService * SERVICE_EMA_ALPHA;
+    artifact.serviceIntegral! += artifact.lastService;
+    artifact.serviceObservedTicks! += 1;
   }
 }
 
@@ -1386,6 +1409,19 @@ export function balancedPortfolioScore(coverage: readonly number[]): number {
   return mean * (0.5 + 0.5 * balance);
 }
 
+export function realizedPortfolioScore(state: WorldState, smoothed = true): number {
+  const serviceCoverage = controllerActions.map((action) =>
+    state.artifacts
+      .filter((artifact) => artifact.health > 0.1 && artifact.controller.action === action)
+      .reduce(
+        (best, artifact) =>
+          Math.max(best, smoothed ? (artifact.serviceEma ?? 0) : (artifact.lastService ?? 0)),
+        0,
+      ),
+  );
+  return balancedPortfolioScore(serviceCoverage);
+}
+
 export function calculateMetrics(state: WorldState): WorldMetrics {
   const validated = state.artifacts.filter(
     (artifact) => artifact.validated && artifact.health > 0.1,
@@ -1398,11 +1434,7 @@ export function calculateMetrics(state: WorldState): WorldMetrics {
     const artifact = nearest(agent, state.artifacts);
     return artifact ? isArtifactContact(agent, artifact) : false;
   }).length;
-  const serviceCoverage = controllerActions.map((action) =>
-    state.artifacts
-      .filter((artifact) => artifact.health > 0.1 && artifact.controller.action === action)
-      .reduce((best, artifact) => Math.max(best, artifact.performance * artifact.health), 0),
-  );
+
   const reused = state.artifacts.filter((artifact) => artifact.adopters.length > 0).length;
   const pathLength = state.agents.reduce((total, agent) => total + agent.trajectory.pathLength, 0);
   const regionsVisited = state.agents.reduce(
@@ -1455,7 +1487,7 @@ export function calculateMetrics(state: WorldState): WorldMetrics {
     validatedInventions: validated.length,
     forkDepth: maxDepth,
     artifactCenteredFraction: state.agents.length ? centered / state.agents.length : 0,
-    portfolioResilience: balancedPortfolioScore(serviceCoverage),
+    portfolioResilience: realizedPortfolioScore(state),
     physicalReuseFraction: state.artifacts.length ? reused / state.artifacts.length : 0,
     openRouterCalls: state.llm.totalCalls,
     openRouterCost: state.llm.totalCost,

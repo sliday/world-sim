@@ -699,6 +699,11 @@ export class WorldRoom extends DurableObject<Env> {
         maintenanceInput: metrics.maintenanceMaterialInput,
       },
       strictlyValidatedInventions: metrics.validatedInventions,
+      livePortfolioResilience: metrics.portfolioResilience,
+      serviceTrackingStartedTick: Math.min(
+        world.tick,
+        ...world.artifacts.map((artifact) => artifact.serviceTrackingStartedTick ?? world.tick),
+      ),
       memoryTokenCapPerAgent: AGENT_MEMORY_TOKEN_CAP,
       worldDecisionIntervalMs: positiveInteger(this.env.ALARM_INTERVAL_MS, 1_000, 60_000),
       decisionsPerWorldTick: world.agents.length,
