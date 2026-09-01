@@ -477,11 +477,16 @@ function renderRecentArtifacts(snapshot: PublicWorldSnapshot): void {
           <header><strong>${escapeHtml(artifact.name)}</strong>${freshnessMarkup(snapshot.tick, artifact.builtAt)}</header>
           <div>${materialChip(artifact.material)}<span>GEN ${artifact.generation}</span><span>${artifact.process ? `${escapeHtml(artifact.process.toUpperCase())} · ${escapeHtml(artifact.stationId ?? "STATION")}` : "LEGACY PROCESS UNRECORDED"}</span><span>${artifact.validated ? "STRICTLY VALIDATED" : "PROVISIONAL"}</span></div>
           ${artifact.specification ? `<p>${escapeHtml(artifact.specification.claimedFunction)}<br>${escapeHtml(artifact.specification.architecture)} · INSPIRED BY ${escapeHtml(artifact.specification.bioInspiration)}</p>` : ""}
-          <p>${Math.round(artifact.performance * 100)}% PERFORMANCE · ${Math.round(artifact.health * 100)}% HEALTH</p>
-          <p>REALIZED SERVICE ${Math.round((artifact.lastService ?? 0) * 100)}% NOW · ${Math.round((artifact.serviceEma ?? 0) * 100)}% RECENT<br>${artifact.serviceObservedTicks ? (((artifact.serviceIntegral ?? 0) / artifact.serviceObservedTicks) * 100).toFixed(1) : "0.0"} SERVICE UNITS / 100 TRACKED TICKS</p>
-          <p>SERVICE INSPECTED BY ${artifact.serviceInspectedBy?.length ?? 0} AGENTS${artifact.serviceInspectionTick ? ` · FIRST T${artifact.serviceInspectionTick.toLocaleString()}` : ""}</p>
-          <p>STORE ${artifact.storedWater?.toFixed(1) ?? "0.0"} WATER · RESERVE ${artifact.reserve?.toFixed(1) ?? "0.0"}<br>FLOW ${artifact.flux?.waterCollected.toFixed(1) ?? "0.0"} CAPTURED · ${artifact.flux?.contaminationRemoved.toFixed(1) ?? "0.0"} REMOVED · ${artifact.flux?.reserveConsumed.toFixed(1) ?? "0.0"} RESERVE USED</p>
-          <small>${artifact.validated ? "ALL 7 VALIDATION GATES PASSED" : `MISSING ${failedValidation.join(" · ") || "VALIDATION EVIDENCE"}`}</small>
+          <dl class="artifact-stats">
+            <dt>PERFORMANCE</dt><dd>${Math.round(artifact.performance * 100)}%</dd>
+            <dt>HEALTH</dt><dd>${Math.round(artifact.health * 100)}%</dd>
+            <dt>SERVICE NOW · RECENT</dt><dd>${Math.round((artifact.lastService ?? 0) * 100)}% · ${Math.round((artifact.serviceEma ?? 0) * 100)}%</dd>
+            <dt>UNITS / 100 TICKS</dt><dd>${artifact.serviceObservedTicks ? (((artifact.serviceIntegral ?? 0) / artifact.serviceObservedTicks) * 100).toFixed(1) : "0.0"}</dd>
+            <dt>INSPECTED BY</dt><dd>${artifact.serviceInspectedBy?.length ?? 0} AGENTS${artifact.serviceInspectionTick ? ` · T${artifact.serviceInspectionTick.toLocaleString()}` : ""}</dd>
+            <dt>STORE · RESERVE</dt><dd>${artifact.storedWater?.toFixed(1) ?? "0.0"} · ${artifact.reserve?.toFixed(1) ?? "0.0"}</dd>
+            <dt>FLOW CAP · REM · USED</dt><dd>${artifact.flux?.waterCollected.toFixed(1) ?? "0.0"} · ${artifact.flux?.contaminationRemoved.toFixed(1) ?? "0.0"} · ${artifact.flux?.reserveConsumed.toFixed(1) ?? "0.0"}</dd>
+          </dl>
+          <small class="${artifact.validated ? "" : "warn"}">${artifact.validated ? "ALL 7 VALIDATION GATES PASSED" : `MISSING ${failedValidation.join(" · ") || "VALIDATION EVIDENCE"}`}</small>
           <small>BUILT T${artifact.builtAt.toLocaleString()} · ${escapeHtml(artifact.creatorId)} · ${artifact.uses.toLocaleString()} USES</small>
         </article>`;
       })

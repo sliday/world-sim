@@ -7,6 +7,8 @@
   color: #f2edcf;
   background: #102426;
   font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  font-variant-numeric: tabular-nums;
   text-rendering: geometricPrecision;
   --ink: #102426;
   --cream: #f2edcf;
@@ -2303,4 +2305,40 @@ a:focus-visible {
 
 .recent-artifact > div > span {
   line-height: 1.4;
+}
+
+/* Artifact card IA: dim labels left, bright tabular values right */
+.artifact-stats {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 5px 12px;
+  margin: 12px 0 0;
+}
+
+.artifact-stats dt {
+  color: rgba(242, 237, 207, 0.55);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.artifact-stats dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+  color: var(--cream);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.recent-artifact small.warn {
+  color: rgba(255, 139, 114, 0.85);
+}
+
+.recent-artifact p,
+.recent-artifact small {
+  text-wrap: pretty;
+}
+
+.craft-tree-hero h1 {
+  text-wrap: balance;
 }
