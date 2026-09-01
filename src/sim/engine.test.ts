@@ -964,6 +964,60 @@ describe("deterministic consequence layer", () => {
     }
   });
 
+  it("creates matched 50, 100, and 200-agent population-scaling worlds", () => {
+    const populations = [50, 100, 200] as const;
+    const worlds = populations.map((population) =>
+      createInitialWorld(3202, 0, "full-culture", population),
+    );
+
+    for (const [index, world] of worlds.entries()) {
+      const population = populations[index]!;
+      expect(world.targetAgentCount).toBe(population);
+      expect(world.agents).toHaveLength(population);
+      expect(world.agents[0]?.id).toBe("A001");
+      expect(world.agents.at(-1)?.id).toBe(`A${String(population).padStart(3, "0")}`);
+      const scheduled = Array.from({ length: MODEL_MACROTURN_INTERVAL_TICKS }, (_, tick) =>
+        decisionAgentsDue(world, tick + 1),
+      );
+      const ids = scheduled.flatMap((agents) => agents.map((agent) => agent.id));
+      expect(ids).toHaveLength(population);
+      expect(new Set(ids).size).toBe(population);
+      expect(Math.max(...scheduled.map((agents) => agents.length))).toBe(
+        Math.ceil(population / MODEL_MACROTURN_INTERVAL_TICKS),
+      );
+      for (const agent of world.agents) {
+        expect(agent.decisionPhase).toBe(
+          decisionPhaseForAgent(agent.id, MODEL_MACROTURN_INTERVAL_TICKS, population),
+        );
+      }
+    }
+
+    expect(worlds[0]!.terrain).toEqual(worlds[1]!.terrain);
+    expect(worlds[1]!.terrain).toEqual(worlds[2]!.terrain);
+    expect(worlds[0]!.stations).toEqual(worlds[1]!.stations);
+    expect(worlds[1]!.stations).toEqual(worlds[2]!.stations);
+    expect(worlds[0]!.agents.map(({ id, x, y }) => ({ id, x, y }))).toEqual(
+      worlds[1]!.agents.slice(0, 50).map(({ id, x, y }) => ({ id, x, y })),
+    );
+
+    const matchedAblation = createInitialWorld(3202, 0, "no-communication", 100);
+    expect(matchedAblation.terrain).toEqual(worlds[1]!.terrain);
+    expect(matchedAblation.stations).toEqual(worlds[1]!.stations);
+    expect(
+      matchedAblation.agents.map(({ id, x, y, decisionPhase }) => ({
+        id,
+        x,
+        y,
+        decisionPhase,
+      })),
+    ).toEqual(
+      worlds[1]!.agents.map(({ id, x, y, decisionPhase }) => ({ id, x, y, decisionPhase })),
+    );
+
+    ensureAgentOperatingSystem(worlds[0]!);
+    expect(worlds[0]!.agents).toHaveLength(50);
+  });
+
   it("preserves an activity between scheduled successful AI decisions", () => {
     const world = createInitialWorld(13, 0);
     const agent = world.agents[0]!;
@@ -1017,7 +1071,7 @@ describe("deterministic consequence layer", () => {
     delete legacy.agents[37]!.materialPurposes;
 
     ensureAgentOperatingSystem(world);
-    expect(world.version).toBe(10);
+    expect(world.version).toBe(11);
     expect(world.interactionCondition).toBe("full-culture");
     expect(agent.directive).toEqual(directive);
     expect(agent.script).toEqual(script);
@@ -1059,7 +1113,7 @@ describe("deterministic consequence layer", () => {
     ensureAgentOperatingSystem(world);
     const artifact = world.artifacts[0]!;
 
-    expect(world.version).toBe(10);
+    expect(world.version).toBe(11);
     expect(artifact.storedWater).toBe(0);
     expect(artifact.reserve).toBe(1.5);
     expect(artifact.flux).toEqual({

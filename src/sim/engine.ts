@@ -243,7 +243,13 @@ function trajectoryRegion(position: { x: number; y: number }): string {
   return `${Math.floor((position.x / WORLD_WIDTH) * 10)}:${Math.floor((position.y / WORLD_HEIGHT) * 10)}`;
 }
 
-function createAgent(terrain: Tile[], rng: Rng, seed: number, index: number): Agent {
+function createAgent(
+  terrain: Tile[],
+  rng: Rng,
+  seed: number,
+  index: number,
+  populationSize: number,
+): Agent {
   const position = findTerrainPoint(terrain, "plain", rng.int(terrain.length));
   const id = `A${String(index + 1).padStart(3, "0")}`;
   const name = generateAgentName(`${seed}:${id}`);
@@ -263,8 +269,11 @@ function createAgent(terrain: Tile[], rng: Rng, seed: number, index: number): Ag
     materialPurposes: {},
     directive: initialDirective(),
     lastDecisionTick: 0,
-    decisionPhase: decisionPhaseForAgent(id),
-    nextDecisionTick: nextScheduledDecisionTick(0, decisionPhaseForAgent(id)),
+    decisionPhase: decisionPhaseForAgent(id, MODEL_MACROTURN_INTERVAL_TICKS, populationSize),
+    nextDecisionTick: nextScheduledDecisionTick(
+      0,
+      decisionPhaseForAgent(id, MODEL_MACROTURN_INTERVAL_TICKS, populationSize),
+    ),
     scriptCursor: 0,
     trail: [position],
     trajectory: {
@@ -274,7 +283,7 @@ function createAgent(terrain: Tile[], rng: Rng, seed: number, index: number): Ag
       artifactContactRadius: ARTIFACT_CONTACT_RADIUS,
       observedTicks: 0,
     },
-    color: Math.floor((index / AGENT_COUNT) * 360),
+    color: Math.floor((index / populationSize) * 360),
     icon: "◎",
     documents: initialDocuments(name),
     script: initialScript(),
@@ -283,31 +292,37 @@ function createAgent(terrain: Tile[], rng: Rng, seed: number, index: number): Ag
   };
 }
 
-function createAgents(terrain: Tile[], rng: Rng, seed: number): Agent[] {
-  return Array.from({ length: AGENT_COUNT }, (_, index) => createAgent(terrain, rng, seed, index));
+function createAgents(terrain: Tile[], rng: Rng, seed: number, populationSize: number): Agent[] {
+  return Array.from({ length: populationSize }, (_, index) =>
+    createAgent(terrain, rng, seed, index, populationSize),
+  );
 }
 
 export function createInitialWorld(
   seed = 260826081,
   now = Date.now(),
   interactionCondition: InteractionCondition = "full-culture",
+  agentCount = AGENT_COUNT,
 ): WorldState {
+  const populationSize = Math.max(1, Math.min(200, Math.floor(agentCount)));
   const rng = new Rng(seed);
+  const stationRng = new Rng(seed ^ 0x51a71e);
   const terrain = createTerrain(seed);
   const state: WorldState = {
-    version: 10,
+    version: 11,
     interactionCondition,
+    targetAgentCount: populationSize,
     seed,
     rngState: rng.snapshot,
     tick: 0,
     lastAdvancedAt: now,
     terrain,
-    agents: createAgents(terrain, rng, seed),
+    agents: createAgents(terrain, rng, seed, populationSize),
     artifacts: [],
     discoveryFrontierPerformance: 0,
     discoveryFrontierArea: 0,
     discoveryFrontierTrackedTicks: 0,
-    stations: createStations(terrain, rng),
+    stations: createStations(terrain, stationRng),
     events: [],
     actionLibrary: baseActionLibrary(),
     messages: [],
@@ -326,8 +341,15 @@ export function createInitialWorld(
 
 export function ensureAgentOperatingSystem(state: WorldState): WorldState {
   const previousVersion = Number(state.version);
-  state.version = 10;
+  state.version = 11;
   state.interactionCondition ??= "full-culture";
+  state.targetAgentCount = Math.max(
+    state.agents.length,
+    Math.max(
+      1,
+      Math.min(200, Math.floor(state.targetAgentCount ?? (state.agents.length || AGENT_COUNT))),
+    ),
+  );
   state.actionLibrary ??= [];
   const aliases = normalizeActionLibrary(state.actionLibrary);
   state.messages ??= [];
@@ -376,10 +398,18 @@ export function ensureAgentOperatingSystem(state: WorldState): WorldState {
   );
   state.discoveryFrontierArea ??= 0;
   state.discoveryFrontierTrackedTicks ??= 0;
-  if (state.agents.length < AGENT_COUNT) {
+  if (state.agents.length < state.targetAgentCount) {
     const rng = new Rng(state.rngState);
-    while (state.agents.length < AGENT_COUNT)
-      state.agents.push(createAgent(state.terrain, rng, state.seed, state.agents.length));
+    while (state.agents.length < state.targetAgentCount)
+      state.agents.push(
+        createAgent(
+          state.terrain,
+          rng,
+          state.seed,
+          state.agents.length,
+          state.targetAgentCount,
+        ),
+      );
     state.rngState = rng.snapshot;
   }
   const baseIds = baseActionLibrary().map((action) => action.id);
@@ -403,7 +433,11 @@ export function ensureAgentOperatingSystem(state: WorldState): WorldState {
     agent.decisionPhase = Number.isInteger(agent.decisionPhase)
       ? ((agent.decisionPhase % MODEL_MACROTURN_INTERVAL_TICKS) + MODEL_MACROTURN_INTERVAL_TICKS) %
         MODEL_MACROTURN_INTERVAL_TICKS
-      : decisionPhaseForAgent(agent.id);
+      : decisionPhaseForAgent(
+          agent.id,
+          MODEL_MACROTURN_INTERVAL_TICKS,
+          state.targetAgentCount,
+        );
     agent.nextDecisionTick =
       Number.isInteger(agent.nextDecisionTick) && agent.nextDecisionTick > state.tick
         ? agent.nextDecisionTick
@@ -429,10 +463,11 @@ export function ensureAgentOperatingSystem(state: WorldState): WorldState {
 export function decisionPhaseForAgent(
   agentId: string,
   interval = MODEL_MACROTURN_INTERVAL_TICKS,
+  populationSize = AGENT_COUNT,
 ): number {
   const ordinal = Number(agentId.slice(1));
   if (!Number.isInteger(ordinal) || ordinal < 1) return 0;
-  return Math.floor(((ordinal - 1) * interval) / AGENT_COUNT);
+  return Math.floor(((ordinal - 1) * interval) / Math.max(1, populationSize));
 }
 
 export function nextScheduledDecisionTick(

@@ -673,6 +673,7 @@ export class WorldRoom extends DurableObject<Env> {
       schema: world.version,
       interactionCondition: world.interactionCondition,
       interactionMechanisms: mechanismsForCondition(world.interactionCondition),
+      targetAgentCount: world.targetAgentCount,
       tick: world.tick,
       agents: world.agents.length,
       artifacts: world.artifacts.length,

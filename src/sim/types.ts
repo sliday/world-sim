@@ -294,8 +294,9 @@ export interface WorldMetrics {
 }
 
 export interface WorldState {
-  version: 10;
+  version: 11;
   interactionCondition: InteractionCondition;
+  targetAgentCount: number;
   seed: number;
   rngState: number;
   tick: number;
