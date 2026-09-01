@@ -11,11 +11,13 @@ import {
   controllerBehaviorSignature,
   createInitialWorld,
   decisionAgentsDue,
+  decisionObservation,
   decisionPhaseForAgent,
   deliverMessagesDue,
   deliverSpeech,
   ensureAgentOperatingSystem,
   isArtifactContact,
+  mechanismsForCondition,
   MODEL_MACROTURN_INTERVAL_TICKS,
   nextScheduledDecisionTick,
   normalizeSpeech,
@@ -745,6 +747,92 @@ describe("deterministic consequence layer", () => {
     expect(deliverMessagesDue(world, recipient.id, recipient.nextDecisionTick)).toBe(0);
   });
 
+  it("removes communication and the global skill library in the no-communication condition", () => {
+    expect(mechanismsForCondition("full-culture")).toEqual({
+      communication: true,
+      programInheritance: true,
+      skillLibrary: true,
+      artifactSpecifications: true,
+    });
+    const world = createInitialWorld(44, 0, "no-communication");
+    const sender = world.agents[0]!;
+    const recipient = world.agents[1]!;
+    recipient.x = sender.x + 1;
+    recipient.y = sender.y;
+    world.actionLibrary.push({
+      id: "shared-recipe",
+      name: "Shared Recipe",
+      icon: "✦",
+      algorithm: "Use one bounded local observation before moving.",
+      program: ["scan-local", "roam"],
+      authorId: "A001",
+      createdTick: 1,
+      uses: 0,
+      recipe: ["fungus", "mineral"],
+    });
+
+    expect(deliverSpeech(world, sender.id, "Fungus rich east.")).toBe(false);
+    expect(world.messages).toHaveLength(0);
+    const observation = decisionObservation(world, recipient);
+    expect(observation.availableMechanisms).toEqual({
+      communication: false,
+      programInheritance: true,
+      skillLibrary: false,
+      artifactSpecifications: true,
+    });
+    expect(observation.heardSpeech).toEqual([]);
+    expect(observation.craftableActions).toEqual([]);
+    expect(observation.creativeSessionEligible).toBe(false);
+  });
+
+  it("keeps physical artifacts but removes program inheritance in no-explicit-culture", () => {
+    const constructNearParent = (
+      condition: "no-communication" | "no-explicit-culture",
+    ): Artifact => {
+      const world = createInitialWorld(260826081, 0, condition);
+      const station = world.stations.find((candidate) => candidate.kind === "assay")!;
+      const parent = fluxArtifact("remediate");
+      parent.id = "parent";
+      parent.x = station.x;
+      parent.y = station.y;
+      world.artifacts = [parent];
+      const builder = world.agents[1]!;
+      builder.x = station.x;
+      builder.y = station.y;
+      builder.inventory.water = 10;
+      builder.inventory.fungus = 10;
+      builder.directive = {
+        ...builder.directive,
+        goal: "build",
+        targetMaterial: "fungus",
+        actionId: "fabricate",
+        artifactSpecification: {
+          name: "Inherited Veil",
+          claimedFunction: "Provide bounded local remediation service.",
+          architecture: "Layered fungal channels around a porous core.",
+          bioInspiration: "mycelial exchange networks",
+          predictedEffects: "Reduce contamination under active controller conditions.",
+        },
+      };
+      builder.script = { ...builder.script, actionId: "fabricate", program: ["build-local"] };
+      builder.scriptCursor = 0;
+
+      advanceWorld(world, 1);
+      return world.artifacts.find((artifact) => artifact.creatorId === builder.id)!;
+    };
+
+    const inherited = constructNearParent("no-communication");
+    expect(inherited.parentId).toBe("parent");
+    expect(inherited.generation).toBe(2);
+    expect(inherited.specification?.name).toBe("Inherited Veil");
+
+    const physicalOnly = constructNearParent("no-explicit-culture");
+    expect(physicalOnly.parentId).toBeUndefined();
+    expect(physicalOnly.generation).toBe(1);
+    expect(physicalOnly.authors).toEqual(["A002"]);
+    expect(physicalOnly.specification).toBeUndefined();
+  });
+
   it("replays the same seed exactly", () => {
     expect(signature(1_200)).toEqual(signature(1_200));
   });
@@ -929,7 +1017,8 @@ describe("deterministic consequence layer", () => {
     delete legacy.agents[37]!.materialPurposes;
 
     ensureAgentOperatingSystem(world);
-    expect(world.version).toBe(9);
+    expect(world.version).toBe(10);
+    expect(world.interactionCondition).toBe("full-culture");
     expect(agent.directive).toEqual(directive);
     expect(agent.script).toEqual(script);
     expect(agent.decisionPhase).toBe(decisionPhaseForAgent(agent.id));
@@ -970,7 +1059,7 @@ describe("deterministic consequence layer", () => {
     ensureAgentOperatingSystem(world);
     const artifact = world.artifacts[0]!;
 
-    expect(world.version).toBe(9);
+    expect(world.version).toBe(10);
     expect(artifact.storedWater).toBe(0);
     expect(artifact.reserve).toBe(1.5);
     expect(artifact.flux).toEqual({

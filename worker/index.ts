@@ -10,6 +10,7 @@ import {
   decisionObservation,
   deliverMessagesDue,
   ensureAgentOperatingSystem,
+  mechanismsForCondition,
   MODEL_MACROTURN_INTERVAL_TICKS,
   publicSnapshot,
   recordFailedDecision,
@@ -670,6 +671,8 @@ export class WorldRoom extends DurableObject<Env> {
     return {
       ok: true,
       schema: world.version,
+      interactionCondition: world.interactionCondition,
+      interactionMechanisms: mechanismsForCondition(world.interactionCondition),
       tick: world.tick,
       agents: world.agents.length,
       artifacts: world.artifacts.length,

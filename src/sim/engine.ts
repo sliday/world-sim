@@ -24,6 +24,7 @@ import {
   type ControllerAction,
   type CraftingTarget,
   type Inventory,
+  type InteractionCondition,
   type MaterialKind,
   type PublicWorldSnapshot,
   type Station,
@@ -51,6 +52,35 @@ const goals: readonly AgentGoal[] = [
   "craft",
   "create",
 ];
+export interface InteractionMechanisms {
+  communication: boolean;
+  programInheritance: boolean;
+  skillLibrary: boolean;
+  artifactSpecifications: boolean;
+}
+
+export function mechanismsForCondition(condition: InteractionCondition): InteractionMechanisms {
+  if (condition === "no-explicit-culture")
+    return {
+      communication: false,
+      programInheritance: false,
+      skillLibrary: false,
+      artifactSpecifications: false,
+    };
+  if (condition === "no-communication")
+    return {
+      communication: false,
+      programInheritance: true,
+      skillLibrary: false,
+      artifactSpecifications: true,
+    };
+  return {
+    communication: true,
+    programInheritance: true,
+    skillLibrary: true,
+    artifactSpecifications: true,
+  };
+}
 export const ARTIFACT_CONTACT_RADIUS = 3;
 export const MODEL_MACROTURN_INTERVAL_TICKS = 60;
 export const CREATIVE_SESSION_COOLDOWN_TICKS = 600;
@@ -257,11 +287,16 @@ function createAgents(terrain: Tile[], rng: Rng, seed: number): Agent[] {
   return Array.from({ length: AGENT_COUNT }, (_, index) => createAgent(terrain, rng, seed, index));
 }
 
-export function createInitialWorld(seed = 260826081, now = Date.now()): WorldState {
+export function createInitialWorld(
+  seed = 260826081,
+  now = Date.now(),
+  interactionCondition: InteractionCondition = "full-culture",
+): WorldState {
   const rng = new Rng(seed);
   const terrain = createTerrain(seed);
   const state: WorldState = {
-    version: 9,
+    version: 10,
+    interactionCondition,
     seed,
     rngState: rng.snapshot,
     tick: 0,
@@ -291,7 +326,8 @@ export function createInitialWorld(seed = 260826081, now = Date.now()): WorldSta
 
 export function ensureAgentOperatingSystem(state: WorldState): WorldState {
   const previousVersion = Number(state.version);
-  state.version = 9;
+  state.version = 10;
+  state.interactionCondition ??= "full-culture";
   state.actionLibrary ??= [];
   const aliases = normalizeActionLibrary(state.actionLibrary);
   state.messages ??= [];
@@ -479,6 +515,7 @@ export function deliverSpeech(
   rawSpeech: string,
   tick = state.tick,
 ): boolean {
+  if (!mechanismsForCondition(state.interactionCondition).communication) return false;
   const sender = state.agents.find((agent) => agent.id === fromId);
   if (!sender) return false;
   const recipient = state.agents
@@ -510,6 +547,7 @@ export function deliverMessagesDue(
   recipientId: string,
   candidateTick: number,
 ): number {
+  if (!mechanismsForCondition(state.interactionCondition).communication) return 0;
   const recipient = state.agents.find((agent) => agent.id === recipientId);
   if (!recipient) return 0;
   const pending = state.messages
@@ -917,12 +955,19 @@ function build(agent: Agent, state: WorldState, rng: Rng): boolean {
   if (!material) return false;
   const station = nearestProcessingStation(agent, state, material);
   if (!station || distanceSquared(agent, station) > PROCESSING_RADIUS_SQUARED) return false;
+  const mechanisms = mechanismsForCondition(state.interactionCondition);
   const parent = nearest(agent, state.artifacts);
-  const canFork = parent && distanceSquared(agent, parent) <= 16 && parent.authors[0] !== agent.id;
+  const canFork =
+    mechanisms.programInheritance &&
+    parent &&
+    distanceSquared(agent, parent) <= 16 &&
+    parent.authors[0] !== agent.id;
   const controller = controllerFor(agent, canFork ? parent : undefined, rng);
   const generation = canFork ? parent.generation + 1 : 1;
   const id = `T${String(state.tick).padStart(6, "0")}-${agent.id}`;
-  const specification = sanitizeArtifactSpecification(agent.directive.artifactSpecification);
+  const specification = mechanisms.artifactSpecifications
+    ? sanitizeArtifactSpecification(agent.directive.artifactSpecification)
+    : undefined;
   const name = specification?.name ?? `${rng.pick(artifactWords[material])} ${rng.pick(formWords)}`;
   const performance = artifactPerformance(
     material,
@@ -1026,8 +1071,9 @@ function inspectOrMaintain(agent: Agent, state: WorldState, rng: Rng, repair: bo
     if (rng.chance(0.02))
       addEvent(state, "repair", `${agent.name} restored ${artifact.name}`, artifact.x, artifact.y);
   } else {
-    agent.mode = "forking";
-    agent.forkedProgramId = artifact.id;
+    const canInherit = mechanismsForCondition(state.interactionCondition).programInheritance;
+    agent.mode = canInherit ? "forking" : "surveying";
+    agent.forkedProgramId = canInherit ? artifact.id : undefined;
   }
   return true;
 }
@@ -1281,7 +1327,8 @@ export function applyDirective(
   const agent = state.agents.find((candidate) => candidate.id === agentId);
   if (!agent) return false;
   if (agent.nextDecisionTick !== decisionTick) return false;
-  if (!agent.craftingTarget && directive.goal === "create") {
+  const mechanisms = mechanismsForCondition(state.interactionCondition);
+  if (mechanisms.skillLibrary && !agent.craftingTarget && directive.goal === "create") {
     const session = directive.creativeSession;
     const eligible =
       agent.curiosity >= CREATIVE_CURIOSITY_THRESHOLD &&
@@ -1319,7 +1366,12 @@ export function applyDirective(
       );
     }
   }
-  if (!agent.craftingTarget && directive.goal === "craft" && directive.craftActionId) {
+  if (
+    mechanisms.skillLibrary &&
+    !agent.craftingTarget &&
+    directive.goal === "craft" &&
+    directive.craftActionId
+  ) {
     const action = state.actionLibrary.find(
       (candidate) =>
         candidate.id === directive.craftActionId &&
@@ -1366,11 +1418,12 @@ export function applyDirective(
     icon,
     actionProposal: undefined,
     artifactSpecification:
-      committedGoal === "build"
+      committedGoal === "build" && mechanisms.artifactSpecifications
         ? sanitizeArtifactSpecification(directive.artifactSpecification)
         : undefined,
     note: directive.note.slice(0, 120),
-    speech: directive.speech ? normalizeSpeech(directive.speech) : undefined,
+    speech:
+      mechanisms.communication && directive.speech ? normalizeSpeech(directive.speech) : undefined,
   };
   const tile = tileAt(state, agent.x, agent.y);
   const heard = agent.heardMessages.at(-1);
@@ -1419,6 +1472,7 @@ export function recordFailedDecision(
 
 export function decisionObservation(state: WorldState, agent: Agent): Record<string, unknown> {
   const tile = tileAt(state, agent.x, agent.y);
+  const mechanisms = mechanismsForCondition(state.interactionCondition);
   const visibleArtifacts = state.artifacts
     .filter((artifact) => distanceSquared(agent, artifact) <= 36)
     .slice(0, 5)
@@ -1434,6 +1488,8 @@ export function decisionObservation(state: WorldState, agent: Agent): Record<str
     }));
   return {
     tick: state.tick,
+    interactionCondition: state.interactionCondition,
+    availableMechanisms: mechanisms,
     agent: { id: agent.id, name: agent.name },
     position: { x: agent.x, y: agent.y },
     localTerrain: tile.terrain,
@@ -1442,6 +1498,7 @@ export function decisionObservation(state: WorldState, agent: Agent): Record<str
     energy: Number(agent.energy.toFixed(2)),
     curiosity: Number(agent.curiosity.toFixed(2)),
     creativeSessionEligible:
+      mechanisms.skillLibrary &&
       !agent.craftingTarget &&
       agent.curiosity >= CREATIVE_CURIOSITY_THRESHOLD &&
       state.tick - agent.lastCreativeTick >= CREATIVE_SESSION_COOLDOWN_TICKS,
@@ -1454,16 +1511,21 @@ export function decisionObservation(state: WorldState, agent: Agent): Record<str
     knownStations: state.stations.filter((station) => distanceSquared(agent, station) <= 100),
     previousPlan: agent.directive,
     operatingFiles: agent.documents,
-    heardSpeech: agent.heardMessages.slice(-4),
+    heardSpeech: mechanisms.communication ? agent.heardMessages.slice(-4) : [],
     currentScript: agent.script,
     availableActions: state.actionLibrary
-      .filter((action) => agent.knownActionIds.includes(action.id))
+      .filter(
+        (action) =>
+          agent.knownActionIds.includes(action.id) && (mechanisms.skillLibrary || !action.recipe),
+      )
       .slice(-12)
       .map(({ id, name, icon, algorithm, program }) => ({ id, name, icon, algorithm, program })),
-    craftableActions: state.actionLibrary
-      .filter((action) => action.recipe && !agent.knownActionIds.includes(action.id))
-      .slice(-12)
-      .map(({ id, name, icon, recipe }) => ({ id, name, icon, recipe })),
+    craftableActions: mechanisms.skillLibrary
+      ? state.actionLibrary
+          .filter((action) => action.recipe && !agent.knownActionIds.includes(action.id))
+          .slice(-12)
+          .map(({ id, name, icon, recipe }) => ({ id, name, icon, recipe }))
+      : [],
   };
 }
 

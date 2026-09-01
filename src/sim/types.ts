@@ -14,6 +14,7 @@ export const terrainKinds = [
 
 export type TerrainKind = (typeof terrainKinds)[number];
 export type MaterialKind = "water" | "fungus" | "mineral" | "cellulose" | "chitin";
+export type InteractionCondition = "full-culture" | "no-communication" | "no-explicit-culture";
 export type AgentMode =
   | "surveying"
   | "harvesting"
@@ -293,7 +294,8 @@ export interface WorldMetrics {
 }
 
 export interface WorldState {
-  version: 9;
+  version: 10;
+  interactionCondition: InteractionCondition;
   seed: number;
   rngState: number;
   tick: number;
