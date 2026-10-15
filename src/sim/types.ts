@@ -319,6 +319,8 @@ export interface WorldState {
     totalCost: number;
     lastModel?: string;
     lastError?: string;
+    decisionBlockedUntil?: number;
+    generationBlockedUntil?: number;
   };
 }
 

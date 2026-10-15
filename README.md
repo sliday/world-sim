@@ -37,12 +37,27 @@ This is a live implementation track toward the paper's core mechanics, not a rep
 - **World authority:** one SQLite-backed Cloudflare Durable Object
 - **Live updates:** hibernatable WebSockets; one-second alarm-driven deterministic ticks
 - **Agent policy:** NullClaw-derived Zig policy core compiled to WebAssembly
-- **Model routing:** `openrouter/free` only, hard-coded server-side with no paid fallback; schema-constrained
+- **Agent decisions:** `~typesafe/jev-latest` through the OpenRouter Decisions API, with the existing `OPENROUTER_API_KEY`.
+- **Text generation:** `openrouter/free` for artifact specifications, creative proposals, and the world diary.
 - **Static hosting:** Cloudflare Workers Static Assets
 
 The full native NullClaw daemon does not run inside a Cloudflare Worker. This project uses NullClaw's official edge pattern: networking, secrets, validation, and consequences stay in the Worker host; a tiny Zig/WASM core selects the context policy used for occasional model decisions.
 
 ## Decision mechanics
+
+Jev chooses the goal, material, controller, and learned activity in one request per agent. Independent agents share the existing pool of six requests.
+The Worker validates answer IDs, allowed labels, confidence, and probability distributions before it commits a directive.
+
+The simulator retains physical rules and craft commitments. Routine activities need no text generation.
+Routine speech states the observed terrain. Communication ablations retain their existing silence.
+Builds and new creative sessions use the existing generator for authored descriptions after Jev selects the activity.
+
+The Worker counts attempted API requests against the daily cap, including separate generation calls.
+Quota errors stop provider calls until the cooldown expires. A daily generation limit suspends that provider until the next UTC day.
+
+The live probe on 2026-10-15 resolved the requested alias to `typesafe/jev-1.14-20261014`.
+The alias follows future releases. The Worker records the resolved model on each accepted directive.
+Local tests and a live API probe validate the contract; they do not establish gains in decision quality, cost, or latency.
 
 The scheduler follows SwarmWorld's fixed per-agent macroturn phases rather than selecting whichever agents look stale. The paper's primary population study used a 50-tick interval; this observatory deliberately uses 60 ticks so one authoritative tick approximates one second and every agent gets one AI opportunity per minute. A macroturn is resolved before its candidate world tick, and retryable provider failures preserve the activity and scheduled tick instead of silently skipping an agent.
 

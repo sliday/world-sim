@@ -35,6 +35,7 @@ import {
   WORLD_DIARY_INTERVAL_TICKS,
 } from "../src/sim/world-diary";
 import { runHeldOutAssay } from "../src/sim/held-out-assay";
+import { JEV_MODEL, JevDecisionError, requestJevDirective } from "../src/sim/jev-decisions";
 import type {
   AgentActionProposal,
   AgentDirective,
@@ -653,7 +654,7 @@ export class WorldRoom extends DurableObject<Env> {
   }
 
   private publicSnapshot(world: WorldState): ReturnType<typeof publicSnapshot> {
-    const snapshot = publicSnapshot(world, openRouterEnabled(this.env), OPENROUTER_FREE_MODEL);
+    const snapshot = publicSnapshot(world, openRouterEnabled(this.env), JEV_MODEL);
     snapshot.diary = this.readWorldDiary(12);
     return snapshot;
   }
@@ -678,9 +679,10 @@ export class WorldRoom extends DurableObject<Env> {
       agents: world.agents.length,
       artifacts: world.artifacts.length,
       llm: openRouterEnabled(this.env) ? "openrouter-assisted" : "deterministic",
-      model: OPENROUTER_FREE_MODEL,
+      model: JEV_MODEL,
+      generationModel: OPENROUTER_FREE_MODEL,
       fallbackModel: null,
-      modelRoute: [OPENROUTER_FREE_MODEL],
+      modelRoute: [JEV_MODEL],
       lastModel: world.llm.lastModel,
       calls: world.llm.totalCalls,
       callsToday: world.llm.callsToday,
@@ -824,6 +826,7 @@ export class WorldRoom extends DurableObject<Env> {
       return false;
     }
     const today = new Date().toISOString().slice(0, 10);
+    if ((world.llm.decisionBlockedUntil ?? 0) > Date.now()) return false;
     if (world.llm.callDay !== today) {
       world.llm.callDay = today;
       world.llm.callsToday = 0;
@@ -864,7 +867,7 @@ export class WorldRoom extends DurableObject<Env> {
         try {
           return {
             agentId: agent.id,
-            result: await this.requestDirective(agent.id, serialized, policyLabel),
+            result: await this.requestDirective(agent.id, serialized, policyLabel, world),
           };
         } catch (error) {
           const decisionError =
@@ -946,9 +949,6 @@ export class WorldRoom extends DurableObject<Env> {
             activityTicks,
           );
       }
-      world.llm.callsToday += 1;
-      world.llm.totalCalls += 1;
-      world.llm.totalCost += outcome.result.cost;
       world.llm.lastModel = outcome.result.model;
     }
     world.llm.lastError = errors.length
@@ -962,6 +962,10 @@ export class WorldRoom extends DurableObject<Env> {
     if (world.tick < state.nextTick) return;
     if (!openRouterEnabled(this.env)) {
       this.deferWorldDiary(world.tick, "OpenRouter disabled");
+      return;
+    }
+    if ((world.llm.generationBlockedUntil ?? 0) > Date.now()) {
+      this.deferWorldDiary(world.tick, "Text generation provider is on cooldown");
       return;
     }
     const dailyLimit = positiveInteger(this.env.MAX_LLM_CALLS_PER_DAY, 21_600, 500_000);
@@ -1023,7 +1027,9 @@ export class WorldRoom extends DurableObject<Env> {
     };
 
     try {
-      const result = await this.requestWorldDiary(JSON.stringify(evidence));
+      world.llm.callsToday += 1;
+      world.llm.totalCalls += 1;
+      const result = await this.requestWorldDiary(JSON.stringify(evidence), world);
       const createdAt = Date.now();
       this.ctx.storage.sql.exec(
         `INSERT INTO world_diary_entries
@@ -1045,8 +1051,6 @@ export class WorldRoom extends DurableObject<Env> {
         JSON.stringify(this.diaryBaseline(world)),
       );
       this.ctx.storage.sql.exec("DELETE FROM world_diary_events WHERE tick <= ?", world.tick);
-      world.llm.callsToday += 1;
-      world.llm.totalCalls += 1;
       world.llm.totalCost += result.cost;
       world.llm.lastModel = result.model ?? world.llm.lastModel;
     } catch (error) {
@@ -1065,7 +1069,7 @@ export class WorldRoom extends DurableObject<Env> {
     );
   }
 
-  private async requestWorldDiary(evidence: string): Promise<ModelDiaryResult> {
+  private async requestWorldDiary(evidence: string, world: WorldState): Promise<ModelDiaryResult> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 12_000);
     try {
@@ -1099,13 +1103,20 @@ export class WorldRoom extends DurableObject<Env> {
       try {
         data = (await response.json()) as OpenRouterResponse;
       } catch {
+        if (response.status === 402 || response.status === 429) {
+          world.llm.generationBlockedUntil = providerCooldown(response);
+          throw new ModelDecisionError(`World diary HTTP ${response.status}`, false);
+        }
         throw new ModelDecisionError("World diary returned invalid response JSON", true);
       }
-      if (!response.ok)
+      if (!response.ok) {
+        if (response.status === 402 || response.status === 429)
+          world.llm.generationBlockedUntil = providerCooldown(response, data.error?.message);
         throw new ModelDecisionError(
           data.error?.message ?? `World diary HTTP ${response.status}`,
-          response.status === 408 || response.status === 429 || response.status >= 500,
+          response.status === 408 || response.status >= 500,
         );
+      }
       const content = data.choices?.[0]?.message?.content;
       if (!content) throw new ModelDecisionError("World diary returned no content", true);
       let parsed: { lines?: unknown };
@@ -1133,7 +1144,39 @@ export class WorldRoom extends DurableObject<Env> {
     agentId: string,
     observation: string,
     policy: string,
+    world: WorldState,
   ): Promise<ModelDirectiveResult> {
+    const state = { ...JSON.parse(observation), nullclawPolicy: policy } as Record<string, unknown>;
+    const countRequest = () => {
+      if (world.llm.callsToday >= positiveInteger(this.env.MAX_LLM_CALLS_PER_DAY, 21_600, 500_000))
+        throw new ModelDecisionError("Daily model limit reached", false);
+      world.llm.callsToday += 1;
+      world.llm.totalCalls += 1;
+    };
+    countRequest();
+    let decision: Awaited<ReturnType<typeof requestJevDirective>>;
+    try {
+      decision = await requestJevDirective(this.env.OPENROUTER_API_KEY!, state);
+    } catch (error) {
+      if (error instanceof JevDecisionError) {
+        if (error.status === 402 || error.status === 429)
+          world.llm.decisionBlockedUntil = Date.now() + error.retryAfterMs;
+        throw new ModelDecisionError(error.message, error.retryable);
+      }
+      throw error;
+    }
+    world.llm.totalCost += decision.cost;
+    world.llm.lastModel = decision.model;
+    const needsGeneration =
+      decision.directive.goal === "build" ||
+      (decision.directive.goal === "create" && !state.craftingTarget);
+    if (!needsGeneration) return decision;
+    if ((world.llm.generationBlockedUntil ?? 0) > Date.now())
+      throw new ModelDecisionError(
+        "Text generation provider is on cooldown; kept current activity",
+        false,
+      );
+    countRequest();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 12_000);
     try {
@@ -1162,7 +1205,7 @@ export class WorldRoom extends DurableObject<Env> {
             },
             {
               role: "user",
-              content: `NullClaw context policy: ${policy}. Local observation: ${observation}`,
+              content: `NullClaw context policy: ${policy}. Local observation: ${observation}. Jev selected these fixed choices: ${JSON.stringify(decision.directive)}. Preserve these choices. Write the note, speech, and the requested artifact specification or creative session.`,
             },
           ],
           response_format: agentDirectiveResponseFormat,
@@ -1175,14 +1218,19 @@ export class WorldRoom extends DurableObject<Env> {
       try {
         data = (await response.json()) as OpenRouterResponse;
       } catch {
+        if (response.status === 402 || response.status === 429) {
+          world.llm.generationBlockedUntil = providerCooldown(response);
+          throw new ModelDecisionError(`OpenRouter HTTP ${response.status}`, false);
+        }
         throw new ModelDecisionError("OpenRouter returned invalid response JSON", true);
       }
       if (!response.ok) {
+        if (response.status === 402 || response.status === 429)
+          world.llm.generationBlockedUntil = providerCooldown(response, data.error?.message);
         const retryable =
           response.status === 408 ||
           response.status === 409 ||
           response.status === 425 ||
-          response.status === 429 ||
           response.status >= 500;
         throw new ModelDecisionError(
           data.error?.message ?? `OpenRouter HTTP ${response.status}`,
@@ -1225,23 +1273,18 @@ export class WorldRoom extends DurableObject<Env> {
       ) {
         throw new ModelDecisionError("OpenRouter directive failed local schema validation", false);
       }
+      world.llm.totalCost += data.usage?.cost ?? 0;
       return {
         directive: {
-          goal: parsed.goal,
-          targetMaterial: parsed.targetMaterial,
-          controllerAction: parsed.controllerAction,
+          ...decision.directive,
           note: String(parsed.note ?? "follow local evidence").slice(0, 120),
-          source: "openrouter",
-          model: data.model,
-          actionId: parsed.actionId.slice(0, 32),
-          icon: parsed.icon,
-          craftActionId: parsed.craftActionId.slice(0, 32),
-          artifactSpecification,
-          creativeSession,
+          artifactSpecification:
+            decision.directive.goal === "build" ? artifactSpecification : undefined,
+          creativeSession: decision.directive.goal === "create" ? creativeSession : undefined,
           speech: parsed.speech.slice(0, 80),
         },
-        model: data.model,
-        cost: data.usage?.cost ?? 0,
+        model: decision.model,
+        cost: decision.cost + (data.usage?.cost ?? 0),
       };
     } catch (error) {
       if (error instanceof ModelDecisionError) throw error;
@@ -1253,6 +1296,18 @@ export class WorldRoom extends DurableObject<Env> {
       clearTimeout(timeout);
     }
   }
+}
+
+function providerCooldown(response: Response, message = ""): number {
+  if (response.status === 402 || /per.day|daily/iu.test(message)) {
+    const tomorrow = new Date();
+    tomorrow.setUTCHours(24, 0, 0, 0);
+    return tomorrow.getTime();
+  }
+  const retryAfter = response.headers.get("Retry-After");
+  const seconds = retryAfter === null ? NaN : Number(retryAfter);
+  if (Number.isFinite(seconds)) return Date.now() + Math.max(1_000, seconds * 1_000);
+  return Math.max(Date.now() + 900_000, Date.parse(retryAfter ?? "") || 0);
 }
 
 function isGoal(value: unknown): value is AgentDirective["goal"] {
