@@ -35,7 +35,7 @@ import {
   WORLD_DIARY_INTERVAL_TICKS,
 } from "../src/sim/world-diary";
 import { runHeldOutAssay } from "../src/sim/held-out-assay";
-import { JEV_MODEL, JevDecisionError, requestJevDirective } from "../src/sim/jev-decisions";
+import { CLEF_MODEL, ClefDecisionError, requestClefDirective } from "../src/sim/clef-decisions";
 import type {
   AgentActionProposal,
   AgentDirective,
@@ -654,7 +654,7 @@ export class WorldRoom extends DurableObject<Env> {
   }
 
   private publicSnapshot(world: WorldState): ReturnType<typeof publicSnapshot> {
-    const snapshot = publicSnapshot(world, openRouterEnabled(this.env), JEV_MODEL);
+    const snapshot = publicSnapshot(world, openRouterEnabled(this.env), CLEF_MODEL);
     snapshot.diary = this.readWorldDiary(12);
     return snapshot;
   }
@@ -679,10 +679,10 @@ export class WorldRoom extends DurableObject<Env> {
       agents: world.agents.length,
       artifacts: world.artifacts.length,
       llm: openRouterEnabled(this.env) ? "openrouter-assisted" : "deterministic",
-      model: JEV_MODEL,
+      model: CLEF_MODEL,
       generationModel: OPENROUTER_FREE_MODEL,
       fallbackModel: null,
-      modelRoute: [JEV_MODEL],
+      modelRoute: [CLEF_MODEL],
       lastModel: world.llm.lastModel,
       calls: world.llm.totalCalls,
       callsToday: world.llm.callsToday,
@@ -1154,11 +1154,11 @@ export class WorldRoom extends DurableObject<Env> {
       world.llm.totalCalls += 1;
     };
     countRequest();
-    let decision: Awaited<ReturnType<typeof requestJevDirective>>;
+    let decision: Awaited<ReturnType<typeof requestClefDirective>>;
     try {
-      decision = await requestJevDirective(this.env.OPENROUTER_API_KEY!, state);
+      decision = await requestClefDirective(this.env.OPENROUTER_API_KEY!, state);
     } catch (error) {
-      if (error instanceof JevDecisionError) {
+      if (error instanceof ClefDecisionError) {
         if (error.status === 402 || error.status === 429)
           world.llm.decisionBlockedUntil = Date.now() + error.retryAfterMs;
         throw new ModelDecisionError(error.message, error.retryable);
@@ -1205,7 +1205,7 @@ export class WorldRoom extends DurableObject<Env> {
             },
             {
               role: "user",
-              content: `NullClaw context policy: ${policy}. Local observation: ${observation}. Jev selected these fixed choices: ${JSON.stringify(decision.directive)}. Preserve these choices. Write the note, speech, and the requested artifact specification or creative session.`,
+              content: `NullClaw context policy: ${policy}. Local observation: ${observation}. Clef selected these fixed choices: ${JSON.stringify(decision.directive)}. Preserve these choices. Write the note, speech, and the requested artifact specification or creative session.`,
             },
           ],
           response_format: agentDirectiveResponseFormat,

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { requestJevDirective } from "./jev-decisions";
+import { requestClefDirective } from "./clef-decisions";
 import { createInitialWorld, decisionObservation } from "./engine";
 
 afterEach(() => {
@@ -14,7 +14,7 @@ function observation() {
 
 function responseBody() {
   return {
-    model: "typesafe/jev-1.14-20261014",
+    model: "cloudflare/clef-flash",
     answers: {
       goal: {
         type: "choice",
@@ -34,37 +34,32 @@ function responseBody() {
         confidence: 1,
         probabilities: { "collect-water": 0, remediate: 1, heal: 0, grow: 0, signal: 0 },
       },
-      actionId: {
-        type: "choice",
-        choice: "default",
-        confidence: 1,
-        probabilities: { default: 1 },
-      },
     },
     usage: { cost: 0.00002, input_tokens: 500, output_tokens: 100 },
   };
 }
 
-describe("Jev agent decisions", () => {
+describe("Clef agent decisions", () => {
   it("uses the existing OpenRouter key and maps typed choices to an executable directive", async () => {
     vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
       expect(url).toBe("https://openrouter.ai/api/alpha/decisions");
       expect(new Headers(init.headers).get("Authorization")).toBe("Bearer existing-key");
       if (typeof init.body !== "string") throw new Error("Expected a JSON request body");
       const body = JSON.parse(init.body);
-      expect(body.model).toBe("~typesafe/jev-latest");
+      expect(body.model).toBe("cloudflare/clef-flash");
       expect(body.state.agent.id).toBe("A001");
+      expect(body.questions.actionId).toBeUndefined();
       expect(body.messages).toBeUndefined();
       return Response.json(responseBody());
     });
-    const result = await requestJevDirective("existing-key", observation());
+    const result = await requestClefDirective("existing-key", observation());
     expect(result.directive).toMatchObject({
       goal: "gather",
       targetMaterial: "water",
       controllerAction: "remediate",
       actionId: "forage",
       source: "openrouter",
-      model: "typesafe/jev-1.14-20261014",
+      model: "cloudflare/clef-flash",
     });
     expect(result.cost).toBe(0.00002);
   });
@@ -77,7 +72,7 @@ describe("Jev agent decisions", () => {
       const state = decisionObservation(world, world.agents[0]!);
       expect(state.localTerrain).toBe("plain");
       vi.stubGlobal("fetch", async () => Response.json(responseBody()));
-      const { directive } = await requestJevDirective("key", state);
+      const { directive } = await requestClefDirective("key", state);
       expect(directive.speech).toBe(
         condition === "full-culture" ? "Ground here plain." : undefined,
       );
@@ -101,23 +96,18 @@ describe("Jev agent decisions", () => {
       vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
         if (typeof init.body !== "string") throw new Error("Expected a JSON request body");
         const body = JSON.parse(init.body);
-        expect(Object.keys(body.questions.goal.criteria)).toEqual([goal]);
-        if (goal === "gather")
-          expect(Object.keys(body.questions.targetMaterial.criteria)).toEqual(["water"]);
+        expect(body.questions.goal).toBeUndefined();
+        if (goal === "gather") expect(body.questions.targetMaterial).toBeUndefined();
         const response = responseBody();
-        return Response.json({
-          ...response,
-          answers: {
-            ...response.answers,
-            goal: { type: "choice", choice: goal, confidence: 1, probabilities: { [goal]: 1 } },
-            targetMaterial:
-              goal === "gather"
-                ? { type: "choice", choice: "water", confidence: 1, probabilities: { water: 1 } }
-                : response.answers.targetMaterial,
-          },
-        });
+        const answers: Record<string, unknown> = { ...response.answers };
+        delete answers.goal;
+        if (goal === "gather") delete answers.targetMaterial;
+        return Response.json({ ...response, answers });
       });
-      expect((await requestJevDirective("key", state)).directive).toMatchObject({ goal, actionId });
+      expect((await requestClefDirective("key", state)).directive).toMatchObject({
+        goal,
+        actionId,
+      });
     },
   );
 
@@ -145,7 +135,7 @@ describe("Jev agent decisions", () => {
         ]);
         return Response.json(responseBody());
       });
-      expect((await requestJevDirective("key", state)).directive.goal).toBe("gather");
+      expect((await requestClefDirective("key", state)).directive.goal).toBe("gather");
     },
   );
 
@@ -172,7 +162,7 @@ describe("Jev agent decisions", () => {
       delete (body.answers.goal.probabilities as Record<string, number>).explore;
     if (failure === "extra-label") Object.assign(body.answers.goal.probabilities, { teleport: 0 });
     vi.stubGlobal("fetch", async () => Response.json(body));
-    await expect(requestJevDirective("key", observation())).rejects.toMatchObject({
+    await expect(requestClefDirective("key", observation())).rejects.toMatchObject({
       retryable: false,
     });
   });
@@ -186,7 +176,7 @@ describe("Jev agent decisions", () => {
         { status, headers: { "Retry-After": "120" } },
       );
     });
-    await expect(requestJevDirective("key", observation())).rejects.toMatchObject({
+    await expect(requestClefDirective("key", observation())).rejects.toMatchObject({
       retryable: false,
       status,
       retryAfterMs: 120_000,
@@ -199,7 +189,7 @@ describe("Jev agent decisions", () => {
     async (status) => {
       const fetch = vi.fn(async () => new Response("Provider limit", { status }));
       vi.stubGlobal("fetch", fetch);
-      await expect(requestJevDirective("key", observation())).rejects.toMatchObject({
+      await expect(requestClefDirective("key", observation())).rejects.toMatchObject({
         retryable: false,
         status,
       });
@@ -209,8 +199,8 @@ describe("Jev agent decisions", () => {
 
   it("rejects invalid JSON without returning a directive", async () => {
     vi.stubGlobal("fetch", async () => new Response("{invalid"));
-    await expect(requestJevDirective("key", observation())).rejects.toMatchObject({
-      name: "JevDecisionError",
+    await expect(requestClefDirective("key", observation())).rejects.toMatchObject({
+      name: "ClefDecisionError",
     });
   });
 
@@ -239,10 +229,10 @@ describe("Jev agent decisions", () => {
         confidence: 1,
         probabilities: { default: 0, "learned-water": 1 },
       };
-      response.answers.actionId = answer;
+      Object.assign(response.answers, { actionId: answer });
       return Response.json(response);
     });
-    const { directive } = await requestJevDirective("key", decisionObservation(world, agent));
+    const { directive } = await requestClefDirective("key", decisionObservation(world, agent));
     expect(directive).toMatchObject({ goal: "gather", actionId: "learned-water", icon: "≈" });
   });
 
@@ -264,7 +254,7 @@ describe("Jev agent decisions", () => {
       if (typeof init.body !== "string") throw new Error("Expected a JSON request body");
       const body = JSON.parse(init.body);
       expect(body.questions.goal.criteria.craft).toBeDefined();
-      expect(body.questions.craftActionId.criteria).toEqual({ "woven-filter": "Woven filter" });
+      expect(body.questions.craftActionId).toBeUndefined();
       const original = responseBody();
       return Response.json({
         ...original,
@@ -276,16 +266,10 @@ describe("Jev agent decisions", () => {
             confidence: 1,
             probabilities: { explore: 0, gather: 0, build: 0, inspect: 0, maintain: 0, craft: 1 },
           },
-          craftActionId: {
-            type: "choice",
-            choice: "woven-filter",
-            confidence: 1,
-            probabilities: { "woven-filter": 1 },
-          },
         },
       });
     });
-    const { directive } = await requestJevDirective("key", decisionObservation(world, agent));
+    const { directive } = await requestClefDirective("key", decisionObservation(world, agent));
     expect(directive).toMatchObject({
       goal: "craft",
       actionId: "craft",
@@ -308,8 +292,8 @@ describe("Jev agent decisions", () => {
           );
         }),
     );
-    const result = expect(requestJevDirective("key", observation())).rejects.toMatchObject({
-      name: "JevDecisionError",
+    const result = expect(requestClefDirective("key", observation())).rejects.toMatchObject({
+      name: "ClefDecisionError",
       retryable: true,
     });
     await vi.advanceTimersByTimeAsync(12_000);
@@ -336,19 +320,16 @@ describe("Jev agent decisions", () => {
       vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
         if (typeof init.body !== "string") throw new Error("Expected a JSON request body");
         const body = JSON.parse(init.body);
-        expect(Object.keys(body.questions.goal.criteria)).toEqual([goal]);
+        expect(body.questions.goal).toBeUndefined();
         const response = responseBody();
-        return Response.json({
-          ...response,
-          answers: {
-            ...response.answers,
-            goal: { type: "choice", choice: goal, confidence: 1, probabilities: { [goal]: 1 } },
-          },
-        });
+        const answers: Record<string, unknown> = { ...response.answers };
+        delete answers.goal;
+        return Response.json({ ...response, answers });
       });
-      expect((await requestJevDirective("key", state)).directive.actionId).toBe(
-        mode === "creative" ? "creative-session" : "craft",
-      );
+      expect((await requestClefDirective("key", state)).directive).toMatchObject({
+        goal,
+        actionId: mode === "creative" ? "creative-session" : "craft",
+      });
     },
   );
 });

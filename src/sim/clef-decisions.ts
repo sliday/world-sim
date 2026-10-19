@@ -1,16 +1,16 @@
 import type { AgentDirective } from "./types";
 import { actionIdForGoal, assignableActionIcons } from "./action-sandbox";
 
-export const JEV_MODEL = "~typesafe/jev-latest";
+export const CLEF_MODEL = "cloudflare/clef-flash";
 
-export class JevDecisionError extends Error {
+export class ClefDecisionError extends Error {
   readonly retryable: boolean;
   readonly status?: number;
   readonly retryAfterMs: number;
 
   constructor(message: string, retryable: boolean, status?: number, retryAfterMs = 900_000) {
     super(message);
-    this.name = "JevDecisionError";
+    this.name = "ClefDecisionError";
     this.retryable = retryable;
     this.status = status;
     this.retryAfterMs = retryAfterMs;
@@ -27,7 +27,7 @@ function choice(instructions: string, criteria: Record<string, string>): ChoiceQ
   return { type: "choice", instructions, criteria };
 }
 
-export async function requestJevDirective(
+export async function requestClefDirective(
   apiKey: string,
   observation: Record<string, unknown>,
 ): Promise<{ directive: AgentDirective; model: string; cost: number }> {
@@ -117,6 +117,14 @@ export async function requestJevDirective(
       "If this agent reproduces a known skill, choose a recipe from state.craftableActions using its inventory and local evidence. Evaluate this hypothetical craft independently of the activity answer.",
       Object.fromEntries(crafts.map((craft) => [craft.id, craft.name])),
     );
+  // Clef rejects choice questions with fewer than two options, so forced answers stay local.
+  const selected: Record<string, string> = {};
+  for (const [id, question] of Object.entries(questions)) {
+    const labels = Object.keys(question.criteria);
+    if (labels.length > 1) continue;
+    selected[id] = labels[0]!;
+    delete questions[id];
+  }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12_000);
   try {
@@ -129,10 +137,10 @@ export async function requestJevDirective(
         "HTTP-Referer": "https://stigmergy-world.stas6236.workers.dev",
         "X-OpenRouter-Title": "Stigmergy World",
       },
-      body: JSON.stringify({ model: JEV_MODEL, state: observation, questions }),
+      body: JSON.stringify({ model: CLEF_MODEL, state: observation, questions }),
     });
     const data = (await response.json().catch(() => {
-      if (response.ok) throw new JevDecisionError("Jev returned invalid response JSON", false);
+      if (response.ok) throw new ClefDecisionError("Clef returned invalid response JSON", false);
       return {};
     })) as {
       answers?: Record<
@@ -154,8 +162,8 @@ export async function requestJevDirective(
       const retryAfterMs = Number.isFinite(seconds)
         ? Math.max(1_000, seconds * 1_000)
         : Math.max(1_000, Date.parse(retryAfter ?? "") - Date.now()) || 900_000;
-      throw new JevDecisionError(
-        data.error?.message ?? `Jev HTTP ${response.status}`,
+      throw new ClefDecisionError(
+        data.error?.message ?? `Clef HTTP ${response.status}`,
         response.status !== 429 && response.status >= 500,
         response.status,
         retryAfterMs,
@@ -166,8 +174,7 @@ export async function requestJevDirective(
       !data.model ||
       Object.keys(data.answers).length !== Object.keys(questions).length
     )
-      throw new JevDecisionError("Jev returned missing or unexpected answers", false);
-    const selected: Record<string, string> = {};
+      throw new ClefDecisionError("Clef returned missing or unexpected answers", false);
     for (const [id, question] of Object.entries(questions)) {
       const answer = data.answers[id];
       const probabilities = answer?.probabilities;
@@ -188,7 +195,7 @@ export async function requestJevDirective(
         ) ||
         Math.abs(labels.reduce((sum, label) => sum + probabilities[label]!, 0) - 1) > 0.01
       )
-        throw new JevDecisionError(`Jev returned an invalid ${id} choice`, false);
+        throw new ClefDecisionError(`Clef returned an invalid ${id} choice`, false);
       selected[id] = answer.choice!;
     }
     const goal = selected.goal as AgentDirective["goal"];
@@ -199,7 +206,7 @@ export async function requestJevDirective(
     const action = actions.find((candidate) => candidate.id === actionId);
     const cost = data.usage?.cost ?? 0;
     if (!Number.isFinite(cost) || cost < 0)
-      throw new JevDecisionError("Jev returned invalid usage", false);
+      throw new ClefDecisionError("Clef returned invalid usage", false);
     return {
       directive: {
         goal,
@@ -222,9 +229,9 @@ export async function requestJevDirective(
       cost,
     };
   } catch (error) {
-    if (error instanceof JevDecisionError) throw error;
-    throw new JevDecisionError(
-      error instanceof Error ? error.message : "Jev transport failed",
+    if (error instanceof ClefDecisionError) throw error;
+    throw new ClefDecisionError(
+      error instanceof Error ? error.message : "Clef transport failed",
       true,
     );
   } finally {
