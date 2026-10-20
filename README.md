@@ -26,7 +26,7 @@ This is a live implementation track toward the paper's core mechanics, not a rep
 - Schema v9 queues addressed speech until the recipient's next fixed macroturn. Sending remains visible immediately, but heard context and durable recipient memory are created only when that scheduled observation occurs, so communication cannot purchase an extra model call.
 - Schema v10 adds persisted full-culture, no-communication, and no-explicit-culture engine conditions. Ablations remove messaging, global recipe sharing, artifact specifications, and/or program inheritance from executable consequences rather than relying on prompt compliance; production remains the full-culture world. Matched multi-seed study orchestration is still required before comparing conditions.
 - Schema v11 supports matched 50-, 100-, and 200-agent worlds with population-aware staggered phases. Terrain, processing stations, corresponding initial agent positions, and phases remain identical across interaction conditions within a population–seed block; production remains the persistent N=100 world.
-- Artifacts remain in the world, can be physically encountered by later agents, and retain executable lineage.
+- Artifacts remain in the world while agents use them, can be physically encountered by later agents, and retain executable lineage; unused ruins erode into a fossil record.
 - Bounded movement trails expose mean path length, regions visited, artifact-contact rate, and spatial entropy without allowing history to grow unbounded.
 - Private SQLite episodic logs retain up to approximately 250,000 tokens per agent with deterministic compaction.
 - Consecutive identical memories collapse into one lossless tick-ranged run (`T120–T420 ×6`); any intervening event starts a new run.
@@ -74,6 +74,17 @@ The world diary is an observer layer over Algorithm 1's `AppendTrace`, not agent
 `GET /api/held-out-assay` freezes the current world into eight exact clones, removes all agents, applies deterministic paired schedules seeded 9201–9208 across 288 evaluation ticks, and reports balanced service coverage per schedule plus the mean. The assay never mutates the discovery world. Its disturbance implementation follows the paper's contamination, drought, damage, and resource-variation structure, but remains this observatory's explicit adaptation rather than a reproduction of the authors' unpublished schedule payloads.
 
 Crafting borrows Infinite Craft's legible pairwise-combination loop, but not its unconstrained ontology. A Creative Session may propose a material pair and a reusable program only from the typed action DSL. The host records that proposal as a physical commitment, seeks missing ingredients, and registers the skill only after both ingredients are consumed. Duplicate or invalid mixes consume the attempt without satisfying curiosity. When the NullClaw core refuses a proposal, the bot loses that attempt too and returns to ordinary work until the 600-tick cooldown ends. Successful recipes become craftable knowledge that another agent can reproduce from the same materials. This preserves SwarmWorld's separation of cognition, transactional validation, deterministic execution, memory, and trace append.
+
+## Pruning and forgetting
+
+Culture decays unless agents use it. The engine checks once per macroturn, under every interaction condition.
+
+- Artifacts erode. The engine removes an artifact once it is dead (health at or below the 0.05 service cutoff) and no agent has used, inspected, maintained, adopted, or forked it for 21,600 ticks (360 macroturns, about 60 hours at the current 10-second tick). Any touch restarts the clock.
+- Agents forget. An agent loses a learned skill it has not run or crafted for 43,200 ticks (720 macroturns, about 5 days at the current 10-second tick), the way a speaker loses an unused language. Agents keep the seven base actions, any skill they are running, and any recipe they are committed to crafting.
+- Skills go extinct. When no agent knows a learned skill and none is crafting it, the engine drops it from the action library, the Craft Tree, and the recipes agents can learn. A later Creative Session that builds the same program registers it again as a novel skill with the same id, satisfies curiosity, and logs it as rediscovered.
+- Fossils keep the history. The snapshot's `fossils` field holds the newest 128 extinct skills (author, recipe, program, creation and extinction ticks, every agent that knew and forgot it) and the newest 256 removed artifacts (creator, authors, contributors, adopters, service inspectors, parent, generation, and build, last-touch, and removal ticks), plus all-time counts. `/api/health` reports the counts. Agents never observe fossils, so pruning adds no culture channel to the ablations.
+
+Migration starts each clock from recorded evidence. An artifact no agent ever touched starts at its build tick or its latest child's fork tick, and a skill its author never ran starts at its creation tick. Every other clock starts at migration. On the T400,389 snapshot, the first pass removes 104 never-touched artifacts and 19 skills known only by their idle authors. If the current activity mix held, the other 36 artifacts would erode 21,600 ticks later and the last 17 learned skills would go extinct 43,200 ticks later.
 
 ## Local development
 

@@ -13,6 +13,15 @@ import {
   validateActionProposal,
 } from "./action-sandbox";
 import {
+  emptyFossilRecord,
+  ensurePruningState,
+  fossilizeArtifact,
+  isFossilSkill,
+  PRUNE_INTERVAL_TICKS,
+  pruneWorld,
+  touchSkill,
+} from "./pruning";
+import {
   AGENT_COUNT,
   WORLD_HEIGHT,
   WORLD_WIDTH,
@@ -293,6 +302,7 @@ function createAgent(
     documents: initialDocuments(name),
     script: initialScript(),
     knownActionIds: baseActionLibrary().map((action) => action.id),
+    skillLastUsedTick: {},
     heardMessages: [],
   };
 }
@@ -331,6 +341,7 @@ export function createInitialWorld(
     stations: createStations(terrain, stationRng),
     events: [],
     actionLibrary: baseActionLibrary(),
+    fossils: emptyFossilRecord(),
     messages: [],
     metrics: emptyMetrics(),
     llm: {
@@ -459,6 +470,7 @@ export function ensureAgentOperatingSystem(state: WorldState): WorldState {
     agent.knownActionIds = [...new Set(agent.knownActionIds.map((id) => aliases.get(id) ?? id))];
     for (const id of baseIds) if (!agent.knownActionIds.includes(id)) agent.knownActionIds.push(id);
   }
+  ensurePruningState(state);
   return state;
 }
 
@@ -566,8 +578,16 @@ function addEvent(
   y: number,
   tick = state.tick,
 ): void {
+  const prefix = `${tick}-${state.rngState}-`;
+  const sequence = state.events.reduce(
+    (next, event) =>
+      event.id.startsWith(prefix)
+        ? Math.max(next, Number(event.id.slice(prefix.length)) + 1)
+        : next,
+    0,
+  );
   state.events.unshift({
-    id: `${tick}-${state.rngState}-${state.events.length}`,
+    id: `${prefix}${sequence}`,
     tick,
     kind,
     text,
@@ -829,6 +849,7 @@ export function completeCrafting(agent: Agent, state: WorldState): boolean {
       return true;
     }
     if (!agent.knownActionIds.includes(action.id)) agent.knownActionIds.push(action.id);
+    touchSkill(agent, action.id, state.tick);
     agent.directive.actionId = action.id;
     agent.discoveries += 1;
     agent.crafts += 1;
@@ -840,7 +861,7 @@ export function completeCrafting(agent: Agent, state: WorldState): boolean {
     addEvent(
       state,
       "creative",
-      `${agent.name} mixed ${target.ingredients.join(" + ")} → ${action.icon} ${action.name}`,
+      `${agent.name} mixed ${target.ingredients.join(" + ")} → ${action.icon} ${action.name}${isFossilSkill(state, action.id) ? " · rediscovered" : ""}`,
       agent.x,
       agent.y,
     );
@@ -869,6 +890,7 @@ export function completeCrafting(agent: Agent, state: WorldState): boolean {
   clearCraftingPurpose(agent, target);
   agent.craftingTarget = undefined;
   if (!agent.knownActionIds.includes(action.id)) agent.knownActionIds.push(action.id);
+  touchSkill(agent, action.id, state.tick);
   agent.crafts += 1;
   agent.curiosity = 0;
   agent.mode = "crafting";
@@ -1081,6 +1103,7 @@ function build(agent: Agent, state: WorldState, rng: Rng): boolean {
     },
     fluxTrackingStartedTick: state.tick,
     builtAt: state.tick,
+    lastTouchedTick: state.tick,
     uses: 0,
     validated: false,
   };
@@ -1092,10 +1115,12 @@ function build(agent: Agent, state: WorldState, rng: Rng): boolean {
   agent.builds += 1;
   agent.mode = canFork ? "forking" : "fabricating";
   agent.forkedProgramId = canFork ? parent.id : undefined;
+  if (canFork) parent.lastTouchedTick = state.tick;
   state.artifacts.push(artifact);
   if (state.artifacts.length > 140) {
     const retired = state.artifacts.findIndex((candidate) => candidate.health <= 0.08);
-    state.artifacts.splice(retired >= 0 ? retired : 0, 1);
+    const [removed] = state.artifacts.splice(retired >= 0 ? retired : 0, 1);
+    if (removed) fossilizeArtifact(state, removed, "capacity");
   }
   addEvent(
     state,
@@ -1113,6 +1138,7 @@ function inspectOrMaintain(agent: Agent, state: WorldState, rng: Rng, repair: bo
   const artifact = nearest(agent, state.artifacts);
   if (!artifact || distanceSquared(agent, artifact) > 5) return false;
   artifact.uses += 1;
+  artifact.lastTouchedTick = state.tick;
   agent.artifactsTouched += 1;
   if (agent.id !== artifact.creatorId && !artifact.adopters.includes(agent.id))
     artifact.adopters.push(agent.id);
@@ -1155,6 +1181,7 @@ function executeAgentScript(agent: Agent, state: WorldState, rng: Rng): boolean 
     agent.script.lastResult = "activity has no bounded primitives";
     return false;
   }
+  touchSkill(agent, agent.script.actionId, state.tick);
   const index = agent.scriptCursor % agent.script.program.length;
   const instruction = agent.script.program[index]!;
   agent.scriptCursor = (index + 1) % agent.script.program.length;
@@ -1367,6 +1394,8 @@ export function advanceWorld(state: WorldState, steps = 1): WorldState {
     const frontierBefore = state.discoveryFrontierPerformance;
     state.tick += 1;
     advanceEnvironment(state);
+    if (state.tick % PRUNE_INTERVAL_TICKS === 0)
+      pruneWorld(state, (text, x, y) => addEvent(state, "prune", text, x, y));
     advanceArtifacts(state, rng);
     for (const agent of state.agents) {
       advanceAgent(agent, state, rng);

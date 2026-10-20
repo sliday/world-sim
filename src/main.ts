@@ -257,6 +257,7 @@ function eventMarkup(event: WorldEvent, newest: boolean, nowTick: number): strin
     decision: "hn-sparkles",
     craft: "hn-code-block",
     creative: "hn-sparkles",
+    prune: "hn-archive",
   };
   return `<div class="event ${newest ? "newest" : ""}"><i class="hn ${icon[event.kind]}"></i><p>${escapeHtml(event.text)}<span>T${event.tick.toLocaleString()} · ${freshnessMarkup(nowTick, event.tick)}</span></p></div>`;
 }
