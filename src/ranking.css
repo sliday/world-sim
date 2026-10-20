@@ -521,6 +521,21 @@ body {
   font-weight: 400;
 }
 
+.ranking-table .king {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border: 1px solid rgba(219, 244, 92, 0.5);
+  color: var(--acid);
+  font-size: 10px;
+  font-style: normal;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
 .ranking-table .prestige {
   display: grid;
   gap: 5px;
