@@ -573,7 +573,7 @@ function emptyMetrics(): WorldMetrics {
   };
 }
 
-function addEvent(
+export function addEvent(
   state: WorldState,
   kind: WorldEvent["kind"],
   text: string,

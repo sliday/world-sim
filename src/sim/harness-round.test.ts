@@ -1,59 +1,25 @@
-// End-to-end Harness² round: the real M1-M4 modules wired into runImprovementRound, with Clef
-// replaced by a fetch stub that answers from label order.
+// End-to-end Harness² round: createRoundDeps wires the real M1-M4 modules into
+// runImprovementRound the way the Worker does, with Clef replaced by a fetch stub that answers
+// from label order.
 import { describe, expect, it } from "vite-plus/test";
-import { actionIdForGoal } from "./action-sandbox";
 import { createClefClient } from "./clef-client";
-import { CLEF_MODEL } from "./clef-decisions";
 import {
   advanceWorld,
   applyDirective,
   createInitialWorld,
   decisionAgentsDue,
-  decisionObservation,
   ensureAgentOperatingSystem,
   mechanismsForCondition,
 } from "./engine";
-import {
-  applyEdits,
-  applyHarnessToQuestions,
-  applySkillTriggers,
-  baseHarness,
-  harnessSignature,
-  harnessState,
-  situationCue,
-  situationFeatures,
-  validateHarness,
-} from "./harness";
-import { proposeCandidateEdits } from "./harness-diagnose";
-import { runImprovementRound, sampleChoice, type RoundDeps } from "./harness-improver";
-import { libraryIndex, matchLibrary } from "./harness-library";
-import {
-  contrastExecutions,
-  deliverableSummary,
-  executionDigest,
-  rolloutDirective,
-} from "./harness-probe";
-import type {
-  AgentHarness,
-  DecisionQuestion,
-  DecisionResponse,
-  LibraryEntry,
-  RoundResult,
-} from "./harness-types";
-import { Rng } from "./rng";
-import type { AgentDirective, InteractionCondition, WorldState } from "./types";
+import { baseHarness, validateHarness } from "./harness";
+import { runImprovementRound, type RoundDeps } from "./harness-improver";
+import { matchLibrary } from "./harness-library";
+import { createRoundDeps } from "./harness-runtime";
+import type { DecisionQuestion, LibraryEntry, RoundResult } from "./harness-types";
+import type { InteractionCondition, WorldState } from "./types";
 
 const SNAPSHOT_PATH = "/Users/stas/.claude/jobs/20600704/tmp/snap.json";
 const STATE_LIMIT = 6_000;
-const BUILT_IN_ACTIONS = new Set([
-  "survey",
-  "forage",
-  "fabricate",
-  "study",
-  "steward",
-  "craft",
-  "creative-session",
-]);
 
 const fs = (await import("node:fs" as string)) as {
   existsSync(path: string): boolean;
@@ -105,78 +71,6 @@ function labelOrderFetch(
   }) as typeof fetch;
 }
 
-/** The routine question set of requestClefDirective in clef-decisions.ts, which builds it inline. */
-function routineQuestions(observation: Record<string, unknown>): {
-  questions: Record<string, DecisionQuestion>;
-  emergencyWater: boolean;
-} {
-  const actions = (observation.availableActions ?? []) as Array<{
-    id: string;
-    name: string;
-    algorithm: string;
-  }>;
-  const crafts = (observation.craftableActions ?? []) as Array<{ id: string; name: string }>;
-  const commitment = observation.craftingTarget as { mode?: string } | undefined;
-  const inventory = observation.inventory as Record<string, number>;
-  const energy = Number(observation.energy);
-  const emergencyWater = !commitment && energy < 0.55 && inventory.water! < 1.5;
-  const choice = (instructions: string, criteria: Record<string, string>): DecisionQuestion => ({
-    type: "choice",
-    instructions,
-    criteria,
-  });
-  const goals: Record<string, string> = commitment
-    ? { [commitment.mode === "creative" ? "create" : "craft"]: "Continue the commitment." }
-    : emergencyWater
-      ? { gather: "Refill the water reserve to restore energy." }
-      : observation.creativeSessionEligible && energy > 0.25
-        ? { create: "Start the required physical two-material experiment." }
-        : {
-            explore: "Explore terrain and locate useful matter or artifacts.",
-            gather: "Gather matter.",
-            build: "Construct an artifact from carried matter near its processing station.",
-            inspect: "Inspect an inherited artifact and verify its actual service.",
-            maintain: "Repair an artifact with carried water.",
-            ...(crafts.length ? { craft: "Reproduce a listed craftable skill." } : {}),
-          };
-  const questions: Record<string, DecisionQuestion> = {
-    goal: choice("Choose the next 60-tick activity for the agent in state.agent.", goals),
-    targetMaterial: choice(
-      "Choose the material this agent should seek or use during its next activity.",
-      emergencyWater
-        ? { water: "Refill the water reserve to restore energy." }
-        : {
-            water: "Energy reserve and repair input.",
-            fungus: "Biological construction matter; process at an assay.",
-            mineral: "Structural construction matter; process at a foundry.",
-            cellulose: "Fibrous construction matter; process at a weave station.",
-            chitin: "Protective construction matter; process at a grind station.",
-          },
-    ),
-    controllerAction: choice("If this agent constructs an artifact, choose its controller.", {
-      "collect-water": "Capture available local moisture.",
-      remediate: "Remove local contamination.",
-      heal: "Repair damaged artifacts.",
-      grow: "Restore depleted local resources.",
-      signal: "Send an environmental signal.",
-    }),
-    actionId: choice("Choose a learned reusable activity, or default for the built-in one.", {
-      default: "Use the built-in activity for the next goal.",
-      ...Object.fromEntries(
-        actions
-          .filter((action) => !BUILT_IN_ACTIONS.has(action.id))
-          .map((action) => [action.id, `${action.name}: ${action.algorithm}`]),
-      ),
-    }),
-  };
-  if (crafts.length)
-    questions.craftActionId = choice(
-      "If this agent reproduces a known skill, choose a recipe.",
-      Object.fromEntries(crafts.map((craft) => [craft.id, craft.name])),
-    );
-  return { questions, emergencyWater };
-}
-
 function dueAgent(world: WorldState): { agentId: string; decisionTick: number } {
   while (!decisionAgentsDue(world, world.tick + 1).length) advanceWorld(world, 1);
   return { agentId: decisionAgentsDue(world, world.tick + 1)[0]!.id, decisionTick: world.tick + 1 };
@@ -192,23 +86,14 @@ interface Harnessed {
   cue: string;
 }
 
-/** Wires the real modules the way the Worker will: decisions apply the harness to the routine
- * questions, rollouts run on clones of `world` at `decisionTick`. */
+/** The Worker's wiring from createRoundDeps, with counting transports: decisions apply the
+ * harness to the routine questions, rollouts run on clones of `world` at `decisionTick`. */
 function wireRound(
   world: WorldState,
   agentId: string,
   decisionTick: number,
   library: LibraryEntry[] = [],
 ): Harnessed {
-  const agent = world.agents.find((candidate) => candidate.id === agentId)!;
-  const features = situationFeatures(world, agent);
-  const cue = situationCue(features);
-  const knownActionIds = [...agent.knownActionIds];
-  const visible = matchLibrary(library, cue, {
-    condition: world.interactionCondition,
-    agentId,
-    shared: mechanismsForCondition(world.interactionCondition).skillLibrary,
-  });
   const stageRequests: ClefRequest[] = [];
   const decisionRequests: ClefRequest[] = [];
   const calls = { decide: 0, clef: 0 };
@@ -220,95 +105,27 @@ function wireRound(
       question.instructions.includes("Harness procedure:"),
     ),
   );
-  const deps: RoundDeps = {
+  const wired = createRoundDeps({
+    world,
+    agentId,
+    decisionTick,
+    library,
     clef: {
       decide(state, questions) {
         calls.clef += 1;
         return stageClient.decide(state, questions);
       },
     },
-    cue,
-    knownActionIds,
-    libraryIndex: libraryIndex(visible),
-    async decide(harness: AgentHarness, draws: number, seed: number) {
+    decisionClef: decisionClient,
+  });
+  const deps: RoundDeps = {
+    ...wired.deps,
+    decide(harness, draws, seed) {
       calls.decide += 1;
-      const observation = {
-        ...decisionObservation(world, agent),
-        scheduledDecisionTick: decisionTick,
-      };
-      const { questions, emergencyWater } = routineQuestions(observation);
-      const shaped = applyHarnessToQuestions(questions, harness, features).questions;
-      const asked: Record<string, DecisionQuestion> = {};
-      const fixed: Record<string, string> = {};
-      for (const [id, question] of Object.entries(shaped)) {
-        const labels = Object.keys(question.criteria);
-        if (labels.length > 1) asked[id] = question;
-        else fixed[id] = labels[0]!;
-      }
-      const response: DecisionResponse = Object.keys(asked).length
-        ? await decisionClient.decide({ ...observation, ...harnessState(harness) }, asked)
-        : { answers: {}, model: CLEF_MODEL, cost: 0 };
-      const rng = new Rng(seed);
-      const directives = Array.from({ length: draws }, (): AgentDirective => {
-        const pick = (id: string) =>
-          fixed[id] ??
-          (asked[id]
-            ? sampleChoice(response.answers[id]!, Object.keys(asked[id].criteria), rng)
-            : undefined);
-        const goal = pick("goal") as AgentDirective["goal"];
-        const targetMaterial = pick("targetMaterial") as AgentDirective["targetMaterial"];
-        const learned = pick("actionId");
-        const directive: AgentDirective = {
-          goal,
-          targetMaterial,
-          controllerAction: pick("controllerAction") as AgentDirective["controllerAction"],
-          actionId:
-            emergencyWater || learned === "default" || goal === "craft" || goal === "create"
-              ? actionIdForGoal(goal)
-              : learned,
-          craftActionId: pick("craftActionId") ?? "",
-          note: `${goal}: ${targetMaterial}; follow local evidence`,
-          source: "openrouter",
-          model: response.model,
-        };
-        return applySkillTriggers(directive, harness, features, knownActionIds);
-      });
-      return {
-        directives,
-        probabilities: Object.fromEntries(
-          Object.entries(response.answers).map(([id, answer]) => [id, answer.probabilities]),
-        ),
-        model: response.model,
-        cost: response.cost,
-      };
+      return wired.deps.decide(harness, draws, seed);
     },
-    rollout: (directive, run, harness, probabilities) =>
-      rolloutDirective(world, agentId, directive, decisionTick, run, harness, { probabilities }),
-    contrast: contrastExecutions,
-    deliverableSummary,
-    executionDigest,
-    // Sequential steps diagnose the checkpoints and probes in the history too. A history run
-    // that repeated an earlier directive would count the same failure twice, so only history
-    // runs with a new directive join the references.
-    propose: (references, history) =>
-      proposeCandidateEdits({
-        world,
-        agentId,
-        features,
-        references: history.reduce(
-          (runs, record) =>
-            contrastExecutions(runs, record).sameDirective ? runs : [...runs, record],
-          references,
-        ),
-        library: visible,
-        base: baseHarness(),
-        knownActionIds,
-      }),
-    applyEdits,
-    validate: (harness) => validateHarness(harness, { knownActionIds }),
-    signature: harnessSignature,
   };
-  return { deps, stageRequests, decisionRequests, calls, cue };
+  return { deps, stageRequests, decisionRequests, calls, cue: wired.cue };
 }
 
 function stateSize(request: ClefRequest): number {

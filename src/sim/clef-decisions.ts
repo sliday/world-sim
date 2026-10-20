@@ -1,42 +1,49 @@
 import type { AgentDirective } from "./types";
 import { actionIdForGoal, assignableActionIcons } from "./action-sandbox";
+import { CLEF_MODEL, ClefDecisionError, createClefClient } from "./clef-client";
+import { applyHarnessToQuestions, applySkillTriggers, harnessState } from "./harness";
+import type { AgentHarness, DecisionQuestion, SituationFeatures } from "./harness-types";
 
-export const CLEF_MODEL = "cloudflare/clef-flash";
+export { CLEF_MODEL, ClefDecisionError };
 
-export class ClefDecisionError extends Error {
-  readonly retryable: boolean;
-  readonly status?: number;
-  readonly retryAfterMs: number;
+type ChoiceQuestion = DecisionQuestion;
 
-  constructor(message: string, retryable: boolean, status?: number, retryAfterMs = 900_000) {
-    super(message);
-    this.name = "ClefDecisionError";
-    this.retryable = retryable;
-    this.status = status;
-    this.retryAfterMs = retryAfterMs;
-  }
+interface ObservedAction {
+  id: string;
+  name: string;
+  icon: string;
+  algorithm: string;
 }
 
-interface ChoiceQuestion {
-  type: "choice";
-  instructions: string;
-  criteria: Record<string, string>;
+/** The routine question set before forced choices resolve, in request order. */
+export interface DecisionRequest {
+  questions: Record<string, DecisionQuestion>;
+  /** Low reserves without a commitment: the goal and material are forced to a water refill. */
+  emergencyWater: boolean;
+}
+
+/** An agent's harness and the deterministic features its conditions read. Without a harness
+ * the request is exactly the H0 request. */
+export interface ClefHarnessOptions {
+  harness?: AgentHarness;
+  features: SituationFeatures;
+  knownActionIds: string[];
+}
+
+/** What goes over the wire: the state, the open questions, and the answers fixed locally. */
+export interface PreparedDecision {
+  state: Record<string, unknown>;
+  asked: Record<string, DecisionQuestion>;
+  fixed: Record<string, string>;
+  emergencyWater: boolean;
 }
 
 function choice(instructions: string, criteria: Record<string, string>): ChoiceQuestion {
   return { type: "choice", instructions, criteria };
 }
 
-export async function requestClefDirective(
-  apiKey: string,
-  observation: Record<string, unknown>,
-): Promise<{ directive: AgentDirective; model: string; cost: number }> {
-  const actions = (observation.availableActions ?? []) as Array<{
-    id: string;
-    name: string;
-    icon: string;
-    algorithm: string;
-  }>;
+export function decisionRequest(observation: Record<string, unknown>): DecisionRequest {
+  const actions = (observation.availableActions ?? []) as ObservedAction[];
   const crafts = (observation.craftableActions ?? []) as Array<{ id: string; name: string }>;
   const commitment = observation.craftingTarget as { mode?: string } | undefined;
   const inventory = observation.inventory as Record<string, number>;
@@ -130,125 +137,90 @@ export async function requestClefDirective(
       "If this agent reproduces a known skill, choose a recipe from state.craftableActions using its inventory and local evidence. Evaluate this hypothetical craft independently of the activity answer.",
       Object.fromEntries(crafts.map((craft) => [craft.id, craft.name])),
     );
-  // Clef rejects choice questions with fewer than two options, so forced answers stay local.
-  const selected: Record<string, string> = {};
-  for (const [id, question] of Object.entries(questions)) {
+  return { questions, emergencyWater };
+}
+
+/** Applies the harness to the routine questions, merges its memory into the state, and splits
+ * the questions into those Clef answers and those fixed locally. Clef rejects choice questions
+ * with fewer than two options, so forced answers stay local. Without a harness, and under H0,
+ * the state is the observation itself and the questions are the routine ones. */
+export function prepareClefDecision(
+  observation: Record<string, unknown>,
+  options?: ClefHarnessOptions,
+): PreparedDecision {
+  const { questions, emergencyWater } = decisionRequest(observation);
+  const harness = options?.harness;
+  const shaped = harness
+    ? applyHarnessToQuestions(questions, harness, options.features).questions
+    : questions;
+  const memory = harness ? harnessState(harness) : undefined;
+  const asked: Record<string, DecisionQuestion> = {};
+  const fixed: Record<string, string> = {};
+  for (const [id, question] of Object.entries(shaped)) {
     const labels = Object.keys(question.criteria);
-    if (labels.length > 1) continue;
-    selected[id] = labels[0]!;
-    delete questions[id];
+    if (labels.length > 1) asked[id] = question;
+    else fixed[id] = labels[0]!;
   }
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12_000);
-  try {
-    const response = await fetch("https://openrouter.ai/api/alpha/decisions", {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://stigmergy-world.stas6236.workers.dev",
-        "X-OpenRouter-Title": "Stigmergy World",
-      },
-      body: JSON.stringify({ model: CLEF_MODEL, state: observation, questions }),
-    });
-    const data = (await response.json().catch(() => {
-      if (response.ok) throw new ClefDecisionError("Clef returned invalid response JSON", false);
-      return {};
-    })) as {
-      answers?: Record<
-        string,
-        {
-          type?: string;
-          choice?: string;
-          confidence?: number;
-          probabilities?: Record<string, number>;
-        }
-      >;
-      model?: string;
-      usage?: { cost?: number };
-      error?: { message?: string };
-    };
-    if (!response.ok) {
-      const retryAfter = response.headers.get("Retry-After");
-      const seconds = retryAfter === null ? NaN : Number(retryAfter);
-      const retryAfterMs = Number.isFinite(seconds)
-        ? Math.max(1_000, seconds * 1_000)
-        : Math.max(1_000, Date.parse(retryAfter ?? "") - Date.now()) || 900_000;
-      throw new ClefDecisionError(
-        data.error?.message ?? `Clef HTTP ${response.status}`,
-        response.status !== 429 && response.status >= 500,
-        response.status,
-        retryAfterMs,
-      );
-    }
-    if (
-      !data.answers ||
-      !data.model ||
-      Object.keys(data.answers).length !== Object.keys(questions).length
-    )
-      throw new ClefDecisionError("Clef returned missing or unexpected answers", false);
-    for (const [id, question] of Object.entries(questions)) {
-      const answer = data.answers[id];
-      const probabilities = answer?.probabilities;
-      const labels = Object.keys(question.criteria);
-      if (
-        answer?.type !== "choice" ||
-        !Object.hasOwn(question.criteria, answer.choice ?? "") ||
-        !Number.isFinite(answer.confidence) ||
-        answer.confidence! < 0 ||
-        answer.confidence! > 1 ||
-        !probabilities ||
-        Object.keys(probabilities).length !== labels.length ||
-        labels.some(
-          (label) =>
-            !Number.isFinite(probabilities[label]) ||
-            probabilities[label]! < 0 ||
-            probabilities[label]! > 1,
-        ) ||
-        Math.abs(labels.reduce((sum, label) => sum + probabilities[label]!, 0) - 1) > 0.01
-      )
-        throw new ClefDecisionError(`Clef returned an invalid ${id} choice`, false);
-      selected[id] = answer.choice!;
-    }
-    const goal = selected.goal as AgentDirective["goal"];
-    const actionId =
-      emergencyWater || selected.actionId === "default" || goal === "craft" || goal === "create"
-        ? actionIdForGoal(goal)
-        : selected.actionId!;
-    const action = actions.find((candidate) => candidate.id === actionId);
-    const cost = data.usage?.cost ?? 0;
-    if (!Number.isFinite(cost) || cost < 0)
-      throw new ClefDecisionError("Clef returned invalid usage", false);
-    return {
-      directive: {
-        goal,
-        targetMaterial: selected.targetMaterial as AgentDirective["targetMaterial"],
-        controllerAction: selected.controllerAction as AgentDirective["controllerAction"],
-        actionId,
-        icon: assignableActionIcons.includes(action?.icon as (typeof assignableActionIcons)[number])
-          ? action!.icon
-          : "◎",
-        craftActionId: selected.craftActionId ?? "",
-        holdMacroturns: Number(selected.holdMacroturns) as AgentDirective["holdMacroturns"],
-        note: `${goal}: ${selected.targetMaterial}; follow local evidence`,
-        source: "openrouter",
-        model: data.model,
-        speech: (observation.availableMechanisms as { communication?: boolean } | undefined)
-          ?.communication
-          ? `Ground here ${String(observation.localTerrain).replaceAll("-", " ")}.`
-          : undefined,
-      },
-      model: data.model,
-      cost,
-    };
-  } catch (error) {
-    if (error instanceof ClefDecisionError) throw error;
-    throw new ClefDecisionError(
-      error instanceof Error ? error.message : "Clef transport failed",
-      true,
-    );
-  } finally {
-    clearTimeout(timeout);
-  }
+  return {
+    state: memory ? { ...observation, ...memory } : observation,
+    asked,
+    fixed,
+    emergencyWater,
+  };
+}
+
+/** Maps one answer per routine question to the directive the simulator executes. */
+export function directiveFromSelection(
+  observation: Record<string, unknown>,
+  selected: Record<string, string>,
+  emergencyWater: boolean,
+  model: string,
+): AgentDirective {
+  const actions = (observation.availableActions ?? []) as ObservedAction[];
+  const goal = selected.goal as AgentDirective["goal"];
+  const actionId =
+    emergencyWater || selected.actionId === "default" || goal === "craft" || goal === "create"
+      ? actionIdForGoal(goal)
+      : selected.actionId!;
+  const action = actions.find((candidate) => candidate.id === actionId);
+  return {
+    goal,
+    targetMaterial: selected.targetMaterial as AgentDirective["targetMaterial"],
+    controllerAction: selected.controllerAction as AgentDirective["controllerAction"],
+    actionId,
+    icon: assignableActionIcons.includes(action?.icon as (typeof assignableActionIcons)[number])
+      ? action!.icon
+      : "◎",
+    craftActionId: selected.craftActionId ?? "",
+    holdMacroturns: Number(selected.holdMacroturns) as AgentDirective["holdMacroturns"],
+    note: `${goal}: ${selected.targetMaterial}; follow local evidence`,
+    source: "openrouter",
+    model,
+    speech: (observation.availableMechanisms as { communication?: boolean } | undefined)
+      ?.communication
+      ? `Ground here ${String(observation.localTerrain).replaceAll("-", " ")}.`
+      : undefined,
+  };
+}
+
+export async function requestClefDirective(
+  apiKey: string,
+  observation: Record<string, unknown>,
+  options?: ClefHarnessOptions,
+): Promise<{ directive: AgentDirective; model: string; cost: number }> {
+  const { state, asked, fixed, emergencyWater } = prepareClefDecision(observation, options);
+  // H0 always leaves controllerAction open; only a harness can force every answer.
+  const response = Object.keys(asked).length
+    ? await createClefClient(apiKey).decide(state, asked)
+    : { answers: {}, model: CLEF_MODEL, cost: 0 };
+  const selected = { ...fixed };
+  for (const [id, answer] of Object.entries(response.answers)) selected[id] = answer.choice;
+  const directive = directiveFromSelection(observation, selected, emergencyWater, response.model);
+  return {
+    directive: options?.harness
+      ? applySkillTriggers(directive, options.harness, options.features, options.knownActionIds)
+      : directive,
+    model: response.model,
+    cost: response.cost,
+  };
 }

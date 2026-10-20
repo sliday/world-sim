@@ -1,10 +1,25 @@
-import { CLEF_MODEL, ClefDecisionError } from "./clef-decisions";
 import type {
   ClefClient,
   DecisionAnswer,
   DecisionQuestion,
   DecisionResponse,
 } from "./harness-types";
+
+export const CLEF_MODEL = "cloudflare/clef-flash";
+
+export class ClefDecisionError extends Error {
+  readonly retryable: boolean;
+  readonly status?: number;
+  readonly retryAfterMs: number;
+
+  constructor(message: string, retryable: boolean, status?: number, retryAfterMs = 900_000) {
+    super(message);
+    this.name = "ClefDecisionError";
+    this.retryable = retryable;
+    this.status = status;
+    this.retryAfterMs = retryAfterMs;
+  }
+}
 
 export function createClefClient(
   apiKey: string,
