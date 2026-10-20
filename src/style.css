@@ -1,8 +1,20 @@
 @import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Silkscreen:wght@400;700&display=swap");
 
 :root {
+  /* Type roles shared by the world view, About, Craft Tree, and Ranking pages. */
   --font-display: "Silkscreen", monospace;
   --font-data: "IBM Plex Mono", ui-monospace, monospace;
+  --font-prose: var(--font-data);
+  --type-hero: clamp(52px, 6.5vw, 92px);
+  --type-heading: 24px;
+  --type-section: 16px;
+  --type-stat: 30px;
+  --type-lede: 16px;
+  --type-body: 14px;
+  --type-label: 12px;
+  --type-micro: 10px;
+  --leading-hero: 0.83;
+  --leading-prose: 1.5;
   font-family: var(--font-data);
   color: #f2edcf;
   background: #102426;
@@ -945,9 +957,9 @@ a.pixel-button {
   max-width: 520px;
   margin: 12px 0 22px;
   color: rgba(242, 237, 207, 0.78);
-  font-family: system-ui, sans-serif;
-  font-size: 16px;
-  line-height: 1.5;
+  font-family: var(--font-prose);
+  font-size: var(--type-lede);
+  line-height: var(--leading-prose);
 }
 
 .craft-tree-state.compact {
@@ -1003,9 +1015,12 @@ a.pixel-button {
 
 .craft-tree-hero h1 {
   margin: 0;
-  font-size: clamp(52px, 6.5vw, 92px);
+  font-family: var(--font-display);
+  font-size: var(--type-hero);
+  font-weight: 700;
   letter-spacing: -0.045em;
-  line-height: 0.83;
+  line-height: var(--leading-hero);
+  text-wrap: balance;
 }
 
 .craft-tree-hero h1 em {
@@ -1017,9 +1032,9 @@ a.pixel-button {
   max-width: 680px;
   margin: 26px 0 0;
   color: rgba(242, 237, 207, 0.72);
-  font-family: system-ui, sans-serif;
-  font-size: 16px;
-  line-height: 1.5;
+  font-family: var(--font-prose);
+  font-size: var(--type-lede);
+  line-height: var(--leading-prose);
 }
 
 .craft-tree-summary {
@@ -1046,14 +1061,14 @@ a.pixel-button {
 
 .craft-tree-summary dt {
   color: rgba(242, 237, 207, 0.74);
-  font-size: 12px;
+  font-size: var(--type-label);
   letter-spacing: 0.12em;
 }
 
 .craft-tree-summary dd {
   margin: 10px 0 0;
   color: var(--acid);
-  font-size: 30px;
+  font-size: var(--type-stat);
   line-height: 1;
 }
 
@@ -1119,18 +1134,18 @@ a.pixel-button {
 
 .craft-graph-section > header span {
   color: var(--aqua);
-  font-size: 10px;
+  font-size: var(--type-micro);
   letter-spacing: 0.12em;
 }
 
 .craft-graph-section > header strong {
   color: var(--cream);
-  font-size: 16px;
+  font-size: var(--type-section);
 }
 
 .craft-graph-section > header small {
   color: rgba(242, 237, 207, 0.64);
-  font-size: 10px;
+  font-size: var(--type-micro);
   letter-spacing: 0.06em;
 }
 
@@ -1329,9 +1344,9 @@ a.pixel-button {
 .craft-graph-detail p,
 .craft-graph-detail li {
   color: rgba(242, 237, 207, 0.8);
-  font-family: system-ui, sans-serif;
-  font-size: 14px;
-  line-height: 1.5;
+  font-family: var(--font-prose);
+  font-size: var(--type-body);
+  line-height: var(--leading-prose);
 }
 
 .craft-graph-detail ul {
@@ -1621,8 +1636,8 @@ a.pixel-button {
 .craft-attempt p {
   margin: 10px 0;
   color: rgba(242, 237, 207, 0.72);
-  font-family: system-ui, sans-serif;
-  font-size: 14px;
+  font-family: var(--font-prose);
+  font-size: var(--type-body);
   line-height: 1.38;
 }
 
@@ -1724,7 +1739,7 @@ a.pixel-button {
 .eyebrow {
   margin: 0 0 22px;
   color: #325f61;
-  font-size: 12px;
+  font-size: var(--type-label);
   font-weight: 700;
   letter-spacing: 0.1em;
 }
@@ -1732,10 +1747,12 @@ a.pixel-button {
 .about-content h1 {
   max-width: 1040px;
   margin: 0;
-  font-size: clamp(52px, 7.5vw, 104px);
+  font-family: var(--font-display);
+  font-size: var(--type-hero);
   font-weight: 700;
   letter-spacing: -0.045em;
-  line-height: 0.88;
+  line-height: var(--leading-hero);
+  text-wrap: balance;
 }
 
 .about-content h1 em {
@@ -1746,6 +1763,7 @@ a.pixel-button {
 .lede {
   max-width: 720px;
   margin: 56px 0 84px auto;
+  font-family: var(--font-prose);
   font-size: clamp(22px, 3vw, 37px);
   line-height: 1.12;
 }
@@ -1785,17 +1803,18 @@ a.pixel-button {
 .paper-section h2,
 .truth-box h2 {
   margin: 0 0 12px;
-  font-size: 24px;
+  font-family: var(--font-display);
+  font-size: var(--type-heading);
   line-height: 1;
 }
 
 .explain-grid p,
-.paper-section p,
+.paper-section p:not(.eyebrow),
 .truth-box p {
   margin: 0;
-  font-family: system-ui, sans-serif;
-  font-size: 15px;
-  line-height: 1.45;
+  font-family: var(--font-prose);
+  font-size: var(--type-body);
+  line-height: var(--leading-prose);
 }
 
 .truth-box {
@@ -2007,6 +2026,10 @@ a.pixel-button {
 }
 
 @media (max-width: 600px) {
+  :root {
+    --type-hero: clamp(32px, 10vw, 58px);
+  }
+
   .wordmark {
     font-size: 18px;
   }
@@ -2166,10 +2189,6 @@ a.pixel-button {
     padding-top: 60px;
   }
 
-  .about-content h1 {
-    font-size: 47px;
-  }
-
   .lede {
     margin: 38px 0 56px;
   }
@@ -2243,13 +2262,8 @@ a.pixel-button {
     padding-bottom: 28px;
   }
 
-  .craft-tree-hero h1 {
-    font-size: clamp(44px, 14vw, 58px);
-  }
-
   .craft-tree-hero > div > p:last-child {
     margin-top: 20px;
-    font-size: 15px;
   }
 
   .craft-tree-summary div {
@@ -2375,12 +2389,11 @@ a.pixel-button {
   }
 }
 
-/* Typography: Silkscreen = display only, IBM Plex Mono = data text */
+/* Typography: Silkscreen = display only, IBM Plex Mono = data text and prose */
 .wordmark,
 .pixel-button,
 .recent-artifacts > header strong,
 .recent-artifact header strong,
-.craft-tree-hero h1,
 .agent-inspector-head strong,
 .craft-tree-state strong,
 .craft-graph-section > header strong,
