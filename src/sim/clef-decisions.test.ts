@@ -34,6 +34,12 @@ function responseBody() {
         confidence: 1,
         probabilities: { "collect-water": 0, remediate: 1, heal: 0, grow: 0, signal: 0 },
       },
+      holdMacroturns: {
+        type: "choice",
+        choice: "4",
+        confidence: 1,
+        probabilities: { "1": 0, "2": 0, "4": 1, "8": 0 },
+      },
     },
     usage: { cost: 0.00002, input_tokens: 500, output_tokens: 100 },
   };
@@ -49,6 +55,7 @@ describe("Clef agent decisions", () => {
       expect(body.model).toBe("cloudflare/clef-flash");
       expect(body.state.agent.id).toBe("A001");
       expect(body.questions.actionId).toBeUndefined();
+      expect(Object.keys(body.questions.holdMacroturns.criteria)).toEqual(["1", "2", "4", "8"]);
       expect(body.messages).toBeUndefined();
       return Response.json(responseBody());
     });
@@ -60,6 +67,7 @@ describe("Clef agent decisions", () => {
       actionId: "forage",
       source: "openrouter",
       model: "cloudflare/clef-flash",
+      holdMacroturns: 4,
     });
     expect(result.cost).toBe(0.00002);
   });
@@ -98,15 +106,18 @@ describe("Clef agent decisions", () => {
         const body = JSON.parse(init.body);
         expect(body.questions.goal).toBeUndefined();
         if (goal === "gather") expect(body.questions.targetMaterial).toBeUndefined();
+        if (goal === "gather") expect(body.questions.holdMacroturns).toBeUndefined();
         const response = responseBody();
         const answers: Record<string, unknown> = { ...response.answers };
         delete answers.goal;
         if (goal === "gather") delete answers.targetMaterial;
+        if (goal === "gather") delete answers.holdMacroturns;
         return Response.json({ ...response, answers });
       });
       expect((await requestClefDirective("key", state)).directive).toMatchObject({
         goal,
         actionId,
+        holdMacroturns: goal === "gather" ? 1 : 4,
       });
     },
   );
@@ -138,6 +149,48 @@ describe("Clef agent decisions", () => {
       expect((await requestClefDirective("key", state)).directive.goal).toBe("gather");
     },
   );
+
+  it("lets Clef hold a commitment with enough water for up to eight macroturns", async () => {
+    const world = createInitialWorld(42);
+    const agent = world.agents[0]!;
+    agent.energy = 0.4;
+    agent.inventory.water = 2;
+    agent.craftingTarget = {
+      mode: "craft",
+      actionName: "Woven filter",
+      ingredients: ["fungus", "cellulose"],
+      purpose: "Filter local contamination",
+      startedTick: 0,
+    };
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+      if (typeof init.body !== "string") throw new Error("Expected a JSON request body");
+      const body = JSON.parse(init.body);
+      expect(Object.keys(body.questions.holdMacroturns.criteria).length).toBeGreaterThanOrEqual(2);
+      const response = responseBody();
+      const answers: Record<string, unknown> = {
+        ...response.answers,
+        holdMacroturns: {
+          type: "choice",
+          choice: "8",
+          confidence: 0.7,
+          probabilities: { "1": 0.1, "2": 0.1, "4": 0.1, "8": 0.7 },
+        },
+      };
+      delete answers.goal;
+      return Response.json({ ...response, answers });
+    });
+    const { directive } = await requestClefDirective("key", decisionObservation(world, agent));
+    expect(directive).toMatchObject({ goal: "craft", holdMacroturns: 8 });
+  });
+
+  it.each(["3", "16"])("rejects a hold of %s macroturns", async (hold) => {
+    const body = responseBody();
+    body.answers.holdMacroturns.choice = hold;
+    vi.stubGlobal("fetch", async () => Response.json(body));
+    await expect(requestClefDirective("key", observation())).rejects.toMatchObject({
+      retryable: false,
+    });
+  });
 
   it.each([
     "missing",
@@ -321,14 +374,17 @@ describe("Clef agent decisions", () => {
         if (typeof init.body !== "string") throw new Error("Expected a JSON request body");
         const body = JSON.parse(init.body);
         expect(body.questions.goal).toBeUndefined();
+        expect(body.questions.holdMacroturns).toBeUndefined();
         const response = responseBody();
         const answers: Record<string, unknown> = { ...response.answers };
         delete answers.goal;
+        delete answers.holdMacroturns;
         return Response.json({ ...response, answers });
       });
       expect((await requestClefDirective("key", state)).directive).toMatchObject({
         goal,
         actionId: mode === "creative" ? "creative-session" : "craft",
+        holdMacroturns: 1,
       });
     },
   );

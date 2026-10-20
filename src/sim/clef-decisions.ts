@@ -40,7 +40,8 @@ export async function requestClefDirective(
   const crafts = (observation.craftableActions ?? []) as Array<{ id: string; name: string }>;
   const commitment = observation.craftingTarget as { mode?: string } | undefined;
   const inventory = observation.inventory as Record<string, number>;
-  const emergencyWater = !commitment && Number(observation.energy) < 0.55 && inventory.water < 1.5;
+  const lowReserve = Number(observation.energy) < 0.55 && inventory.water < 1.5;
+  const emergencyWater = !commitment && lowReserve;
   const goals: Record<string, string> = commitment
     ? {
         [commitment.mode === "creative" ? "create" : "craft"]:
@@ -110,6 +111,18 @@ export async function requestClefDirective(
             .map((action) => [action.id, `${action.name}: ${action.algorithm}`]),
         ),
       },
+    ),
+    holdMacroturns: choice(
+      "Choose how many 60-tick macroturns the agent in state.agent keeps its next activity before its next AI reassessment. The simulator wakes it at its next macroturn when energy and water run low, its program stalls, or its crafting commitment ends.",
+      // Low reserves wake a holding agent at once, so a longer hold would buy nothing.
+      lowReserve
+        ? { "1": "Reassess at the next macroturn while energy and water are low." }
+        : {
+            "1": "Reassess at the next macroturn: energy is low, terrain is unfamiliar, the activity is an inspection, or it is about to finish.",
+            "2": "Keep a working activity for two macroturns when it may need a change soon.",
+            "4": "Keep a stable, self-sustaining activity, such as gathering a plentiful material toward a stock target.",
+            "8": "Keep a long commitment, such as a crafting commitment or long travel to a distant station.",
+          },
     ),
   };
   if (crafts.length)
@@ -217,6 +230,7 @@ export async function requestClefDirective(
           ? action!.icon
           : "◎",
         craftActionId: selected.craftActionId ?? "",
+        holdMacroturns: Number(selected.holdMacroturns) as AgentDirective["holdMacroturns"],
         note: `${goal}: ${selected.targetMaterial}; follow local evidence`,
         source: "openrouter",
         model: data.model,

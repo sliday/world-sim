@@ -87,6 +87,7 @@ export interface AgentDirective {
   creativeSession?: CreativeSessionProposal;
   artifactSpecification?: ArtifactSpecification;
   speech?: string;
+  holdMacroturns?: 1 | 2 | 4 | 8;
 }
 
 export interface ArtifactSpecification {
@@ -186,6 +187,7 @@ export interface Agent {
   decisionPhase: number;
   nextDecisionTick: number;
   scriptCursor: number;
+  failedPrimitiveStreak?: number;
   trail: Vec2[];
   trajectory: AgentTrajectory;
   color: number;
@@ -321,6 +323,8 @@ export interface WorldState {
     lastError?: string;
     decisionBlockedUntil?: number;
     generationBlockedUntil?: number;
+    holdWakeUps: number;
+    holdSkipsScheduled: number;
   };
 }
 

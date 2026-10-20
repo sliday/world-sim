@@ -52,6 +52,7 @@ const goals: readonly AgentGoal[] = [
   "craft",
   "create",
 ];
+const holdMacroturnOptions: readonly number[] = [1, 2, 4, 8];
 export interface InteractionMechanisms {
   communication: boolean;
   programInheritance: boolean;
@@ -94,6 +95,8 @@ const ARTIFACT_STORAGE_CAPACITY = 2;
 const INITIAL_ARTIFACT_RESERVE = 1.5;
 const MAX_ARTIFACT_ACTUATION = 0.018;
 const SERVICE_EMA_ALPHA = 0.08;
+const HOLD_WAKE_ENERGY = 0.55;
+const HOLD_WAKE_WATER = 1.5;
 const processingStationForMaterial: Record<MaterialKind, Station["kind"]> = {
   water: "wash",
   fungus: "assay",
@@ -332,6 +335,8 @@ export function createInitialWorld(
       callDay: new Date(now).toISOString().slice(0, 10),
       totalCalls: 0,
       totalCost: 0,
+      holdWakeUps: 0,
+      holdSkipsScheduled: 0,
     },
   };
   state.rngState = rng.snapshot;
@@ -353,6 +358,8 @@ export function ensureAgentOperatingSystem(state: WorldState): WorldState {
   state.actionLibrary ??= [];
   const aliases = normalizeActionLibrary(state.actionLibrary);
   state.messages ??= [];
+  state.llm.holdWakeUps ??= 0;
+  state.llm.holdSkipsScheduled ??= 0;
   for (const message of state.messages) {
     message.deliverAtTick ??= message.tick;
     if (previousVersion < 9) message.deliveredTick ??= message.tick;
@@ -484,6 +491,43 @@ export function decisionAgentsDue(
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 
+// A wake-up only pulls a held decision back to the agent's next phase tick after the current tick.
+export function wakeHoldingAgent(
+  state: WorldState,
+  agent: Agent,
+  interval = MODEL_MACROTURN_INTERVAL_TICKS,
+): boolean {
+  const wakeTick = nextScheduledDecisionTick(state.tick, agent.decisionPhase, interval);
+  if (agent.nextDecisionTick <= wakeTick) return false;
+  state.llm.holdSkipsScheduled -= (agent.nextDecisionTick - wakeTick) / interval;
+  state.llm.holdWakeUps += 1;
+  agent.nextDecisionTick = wakeTick;
+  return true;
+}
+
+export function decisionHoldStats(state: WorldState, interval = MODEL_MACROTURN_INTERVAL_TICKS) {
+  const pendingHoldSkips = state.agents.reduce(
+    (total, agent) =>
+      total +
+      Math.max(
+        0,
+        (agent.nextDecisionTick -
+          nextScheduledDecisionTick(state.tick, agent.decisionPhase, interval)) /
+          interval,
+      ),
+    0,
+  );
+  return {
+    meanScheduledHoldMacroturns: state.agents.length
+      ? state.agents.reduce((total, agent) => total + (agent.directive.holdMacroturns ?? 1), 0) /
+        state.agents.length
+      : 1,
+    wakeUps: state.llm.holdWakeUps,
+    decisionsAvoided: Math.max(0, state.llm.holdSkipsScheduled - pendingHoldSkips),
+    pendingHoldSkips,
+  };
+}
+
 function emptyMetrics(): WorldMetrics {
   return {
     activeAgents: AGENT_COUNT,
@@ -551,10 +595,8 @@ export function deliverSpeech(
   if (!recipient) return false;
   const text = normalizeSpeech(rawSpeech);
   sender.lastSpeech = text;
-  const deliverAtTick =
-    recipient.nextDecisionTick > tick
-      ? recipient.nextDecisionTick
-      : nextScheduledDecisionTick(tick, recipient.decisionPhase);
+  // A holding recipient hears queued speech at its next actual decision, including an early wake-up.
+  const deliverAtTick = nextScheduledDecisionTick(tick, recipient.decisionPhase);
   state.messages.unshift({
     id: `M${tick}-${fromId}-${recipient.id}-${state.messages.length}`,
     tick,
@@ -1139,6 +1181,7 @@ function executeAgentScript(agent: Agent, state: WorldState, rng: Rng): boolean 
     const expectedMode = instruction === "mix-local" ? "creative" : "craft";
     const craftsBefore = agent.crafts;
     if (agent.craftingTarget?.mode === expectedMode && completeCrafting(agent, state)) {
+      wakeHoldingAgent(state, agent);
       agent.script.lastResult =
         agent.crafts > craftsBefore
           ? expectedMode === "creative"
@@ -1207,8 +1250,10 @@ function advanceAgent(agent: Agent, state: WorldState, rng: Rng): void {
   agent.curiosity = Math.min(1, agent.curiosity + CURIOSITY_PER_TICK);
   sustainFromCarriedWater(agent);
   const acted = executeAgentScript(agent, state, rng);
+  agent.failedPrimitiveStreak = acted ? 0 : (agent.failedPrimitiveStreak ?? 0) + 1;
   agent.energy -= acted ? 0.0012 : 0.002;
-  if (agent.energy <= 0) {
+  const rebooted = agent.energy <= 0;
+  if (rebooted) {
     agent.energy = 0.42;
     addEvent(
       state,
@@ -1218,6 +1263,12 @@ function advanceAgent(agent: Agent, state: WorldState, rng: Rng): void {
       agent.y,
     );
   }
+  if (
+    rebooted ||
+    (agent.energy < HOLD_WAKE_ENERGY && agent.inventory.water < HOLD_WAKE_WATER) ||
+    agent.failedPrimitiveStreak >= Math.max(1, agent.script.program.length)
+  )
+    wakeHoldingAgent(state, agent);
   recordTrail(agent, state);
 }
 
@@ -1349,6 +1400,11 @@ export function applyDirective(
   if (!goals.includes(directive.goal)) return false;
   if (!materials.includes(directive.targetMaterial)) return false;
   if (!controllerActions.includes(directive.controllerAction)) return false;
+  if (
+    directive.holdMacroturns !== undefined &&
+    !holdMacroturnOptions.includes(directive.holdMacroturns)
+  )
+    return false;
   const agent = state.agents.find((candidate) => candidate.id === agentId);
   if (!agent) return false;
   if (agent.nextDecisionTick !== decisionTick) return false;
@@ -1435,8 +1491,10 @@ export function applyDirective(
   )
     ? directive.icon
     : undefined;
+  const holdMacroturns = directive.source === "openrouter" ? (directive.holdMacroturns ?? 1) : 1;
   agent.directive = {
     ...directive,
+    holdMacroturns,
     goal: committedGoal,
     targetMaterial,
     actionId,
@@ -1459,8 +1517,10 @@ export function applyDirective(
     `${tile.terrain}; energy ${Math.round(agent.energy * 100)}%; ${agent.artifactsTouched} artifact contacts${heard ? `; heard ${heard.fromId}: “${heard.text}”` : ""}`,
   );
   agent.scriptCursor = 0;
+  agent.failedPrimitiveStreak = 0;
   agent.lastDecisionTick = decisionTick;
-  agent.nextDecisionTick = decisionTick + interval;
+  agent.nextDecisionTick = decisionTick + interval * holdMacroturns;
+  state.llm.holdSkipsScheduled += holdMacroturns - 1;
   if (agent.directive.speech) deliverSpeech(state, agent.id, agent.directive.speech, decisionTick);
   addEvent(
     state,
