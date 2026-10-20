@@ -789,7 +789,7 @@ describe("deterministic consequence layer", () => {
     expect(generateBotAppearance("260826081:A001")).toEqual(
       generateBotAppearance("260826081:A001"),
     );
-    expect(botPortraitSvg("260826081:A001")).toContain("<radialGradient");
+    expect(botPortraitSvg("260826081:A001")).not.toContain("<radialGradient");
     expect(botPortraitSvg("260826081:A001")).toContain("<feTurbulence");
   });
 
