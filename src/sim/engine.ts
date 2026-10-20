@@ -577,8 +577,16 @@ function addEvent(
   y: number,
   tick = state.tick,
 ): void {
+  const prefix = `${tick}-${state.rngState}-`;
+  const sequence = state.events.reduce(
+    (next, event) =>
+      event.id.startsWith(prefix)
+        ? Math.max(next, Number(event.id.slice(prefix.length)) + 1)
+        : next,
+    0,
+  );
   state.events.unshift({
-    id: `${tick}-${state.rngState}-${state.events.length}`,
+    id: `${prefix}${sequence}`,
     tick,
     kind,
     text,

@@ -9,6 +9,7 @@ import {
   ensureAgentOperatingSystem,
   mechanismsForCondition,
   publicSnapshot,
+  recordFailedDecision,
 } from "./engine";
 import {
   ARTIFACT_DECAY_WINDOW_TICKS,
@@ -469,5 +470,22 @@ describe("pruning and forgetting", () => {
       expect(observation.availableMechanisms).toEqual(mechanismsForCondition(condition));
       expect(JSON.stringify(observation)).not.toMatch(/fossil|a-old|ruin/iu);
     }
+  });
+});
+
+describe("world event ids", () => {
+  it("keeps same-tick event ids unique after the event list fills", () => {
+    const world = createInitialWorld(260826081, 0);
+    const decisionTick = 600;
+    const seen = new Set<string>();
+    for (const agent of world.agents.slice(0, 40)) {
+      agent.nextDecisionTick = decisionTick;
+      expect(recordFailedDecision(world, agent.id, decisionTick, "provider timeout")).toBe(true);
+      const newest = world.events[0]!;
+      expect(seen.has(newest.id)).toBe(false);
+      seen.add(newest.id);
+    }
+    expect(world.events).toHaveLength(28);
+    expect(new Set(world.events.map((event) => event.id)).size).toBe(28);
   });
 });

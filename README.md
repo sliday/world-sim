@@ -78,8 +78,8 @@ Crafting borrows Infinite Craft's legible pairwise-combination loop, but not its
 
 Culture decays unless agents use it. The engine checks once per macroturn, under every interaction condition.
 
-- Artifacts erode. The engine removes an artifact once it is dead (health at or below the 0.05 service cutoff) and no agent has used, inspected, maintained, adopted, or forked it for 21,600 ticks (6 hours). Any touch restarts the clock.
-- Agents forget. An agent loses a learned skill it has not run or crafted for 43,200 ticks (12 hours), the way a speaker loses an unused language. Agents keep the seven base actions, any skill they are running, and any recipe they are committed to crafting.
+- Artifacts erode. The engine removes an artifact once it is dead (health at or below the 0.05 service cutoff) and no agent has used, inspected, maintained, adopted, or forked it for 21,600 ticks (360 macroturns, about 60 hours at the current 10-second tick). Any touch restarts the clock.
+- Agents forget. An agent loses a learned skill it has not run or crafted for 43,200 ticks (720 macroturns, about 5 days at the current 10-second tick), the way a speaker loses an unused language. Agents keep the seven base actions, any skill they are running, and any recipe they are committed to crafting.
 - Skills go extinct. When no agent knows a learned skill and none is crafting it, the engine drops it from the action library, the Craft Tree, and the recipes agents can learn. A later Creative Session that builds the same program registers it again as a novel skill with the same id, satisfies curiosity, and logs it as rediscovered.
 - Fossils keep the history. The snapshot's `fossils` field holds the newest 128 extinct skills (author, recipe, program, creation and extinction ticks, every agent that knew and forgot it) and the newest 256 removed artifacts (creator, authors, contributors, adopters, service inspectors, parent, generation, and build, last-touch, and removal ticks), plus all-time counts. `/api/health` reports the counts. Agents never observe fossils, so pruning adds no culture channel to the ablations.
 

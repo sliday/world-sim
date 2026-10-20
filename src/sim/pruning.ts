@@ -8,21 +8,24 @@ import type {
   WorldState,
 } from "./types";
 
-// One tick is about one second; one macroturn is 60 ticks.
+// Windows count ticks because world dynamics are tick-based. One macroturn is
+// 60 ticks; production ticks every 10 s, so one macroturn is 10 minutes.
 // Pruning runs once per macroturn. The windows below are hundreds of
 // macroturns long, so the check cadence never decides an outcome.
 export const PRUNE_INTERVAL_TICKS = 60;
 // advanceArtifacts stops all service at or below this health.
 export const ARTIFACT_SERVICE_CUTOFF = 0.05;
-// 6 h: an unmaintained artifact falls from full health to the service cutoff
-// in about 1,400 ticks, and its embodied heal reserve adds at most about 2,100
-// more, so an artifact nobody touched for 6 h has been dead for about 5 h.
-// 100 agents make 36,000 macroturn choices in that time without visiting it.
+// 21,600 ticks (360 macroturns, about 60 hours at 10 s per tick): an
+// unmaintained artifact falls from full health to the service cutoff in about
+// 1,400 ticks, and its embodied heal reserve adds at most about 2,100 more, so
+// an artifact nobody touched for this window has been dead for at least
+// 18,000 ticks. 100 agents pass 36,000 macroturns in it without visiting.
 export const ARTIFACT_DECAY_WINDOW_TICKS = 21_600;
-// 12 h: 720 macroturn choices in which the agent never ran the skill. That is
-// about 17 curiosity refills (2,450 ticks each), so another agent can craft
-// the recipe many times before the last speaker forgets it. Knowledge outlives
-// a dead machine, so this window is twice the artifact window.
+// 43,200 ticks (720 macroturns, about 5 days at 10 s per tick) in which the
+// agent never ran the skill. That is about 17 curiosity refills (2,450 ticks
+// each), so another agent can craft the recipe many times before the last
+// speaker forgets it. Knowledge outlives a dead machine, so this window is
+// twice the artifact window.
 export const SKILL_FORGETTING_WINDOW_TICKS = 43_200;
 // Full archives measure about 33 KB (skills) and 94 KB (artifacts) of JSON,
 // which fits beside the 1.2 MB world in its single Durable Object value.
