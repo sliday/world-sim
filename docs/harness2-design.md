@@ -33,16 +33,11 @@ No stage sees a score, rubric, or grader. Outcomes are behavioural counts.
 - `applySkillTriggers(directive: AgentDirective, harness: AgentHarness, features: SituationFeatures, knownActionIds: string[]): AgentDirective`
 - `applyEdits(base: AgentHarness, edits: HarnessEdit[]): AgentHarness` — pure; adds or removes items by id; ignores duplicate adds; does not bump revision.
 - `validateHarness(harness: AgentHarness, context: { knownActionIds: string[] }): HarnessValidation` — limits in `HARNESS_LIMITS`; guard questions limited to `goal`, `targetMaterial`, `controllerAction`, `actionId`, `holdMacroturns` and labels to that question's vocabulary; skills name known actions; facts in bounds with finite coordinates; no text containing `{{`, `{%`, "score", "grader", or "rubric".
-- `verifyFact(state: WorldState, fact: HarnessFact): boolean` — resource: tile of that material with richness >= 0.12; depleted: richness < 0.12; station: a station of that kind at the point; hazard: contamination >= 0.45; artifact: an artifact within 1 tile.
-- `editId(edit: Omit<HarnessEdit, "id">): string` — stable hash of component, op, and item content (ignore summary, moment, source).
 - `harnessSignature(harness: AgentHarness): string` — stable hash of the five components.
 - `situationCue(features: SituationFeatures): string` — bucketed tokens joined by `|`: `energy:{critical<0.3,low<0.55,ok<0.8,high}`, `water:{none<0.5,low<1.5,ok<3,full}`, `terrain:<kind>`, `richness:{depleted<0.08,thin<0.12,viable<0.4,rich}`, `commitment:{yes,no}`, `build:{ready,none}`, `contamination:{clean<0.2,dirty<0.55,toxic}`, `hoard:{yes,no}` (any non-water material >= 12).
-- `cueSimilarity(a: string, b: string): number` — Jaccard over tokens.
 
 ### M1b `src/sim/clef-client.ts` (+ test)
 - `createClefClient(apiKey: string, fetchImpl: typeof fetch = fetch, timeoutMs = 12_000): ClefClient` — same endpoint, headers, model, validation, and `ClefDecisionError` semantics (retryable, status, retryAfterMs) as `requestClefDirective` in `clef-decisions.ts`. Import `CLEF_MODEL` and `ClefDecisionError` from there; do not edit `clef-decisions.ts`. Throws before any network call if a question has fewer than two options.
-- `sampleChoice(answer: DecisionAnswer, labels: string[], rng: Rng): string` — inverse CDF in label order.
-- `sampleDistinct(answer: DecisionAnswer, labels: string[], rng: Rng, count: number): string[]` — without replacement, renormalizing.
 
 ### M2 `src/sim/harness-probe.ts` (+ test)
 - `PROBE_HORIZON_TICKS = 120`
@@ -55,6 +50,9 @@ No stage sees a score, rubric, or grader. Outcomes are behavioural counts.
 - `proposeCandidateEdits(input: { world: WorldState; agentId: string; features: SituationFeatures; references: ExecutionRecord[]; library: LibraryEntry[]; base: AgentHarness; knownActionIds: string[] }): { INV: HarnessEdit[]; DOM: HarnessEdit[] }` — at most 6 per scope, strongest evidence first (repeated across references beats a single run). Every diagnosis edit carries a `moment` from a reference trajectory. Never re-propose an item already in `base`. Library entries matched by cue contribute their harness items as `source: "library"` edits; memory facts must pass `verifyFact` against the current world first.
   - INV diagnosers: repeated primitive failure; reboot or energy crash (earlier refill guard); stall (no productive success and almost no movement); hoarding (a non-water material >= 12 while still gathering it); build-ready matter never built; an applicable known learned action (skill trigger). Guards must name the observed condition and must never make the only energy source unreachable while energy < 0.3.
   - DOM diagnosers: verified viable resource locations; depleted local tiles with guidance on the matching material option; processing station for carried build-ready matter; local contamination hazard with guidance for `remediate`; serviceable visible artifacts with guidance for `inspect`. Fact text starts with "In this workspace".
+- `verifyFact(state: WorldState, fact: HarnessFact): boolean` (in `harness-diagnose.ts`) — resource: tile of that material with richness >= 0.12; depleted: richness < 0.12; station: a station of that kind at the point; hazard: contamination >= 0.45; artifact: an artifact within 1 tile.
+- `editId(edit: Omit<HarnessEdit, "id">): string` (in `harness-diagnose.ts`) — stable hash of component, op, and item content (ignore summary, moment, source).
+- `cueSimilarity(a: string, b: string): number` (in `harness-library.ts`) — Jaccard over tokens.
 - `matchLibrary(entries: LibraryEntry[], cue: string, options: { condition: InteractionCondition; agentId: string; shared: boolean; limit?: number }): LibraryEntry[]`
 - `libraryIndex(entries: LibraryEntry[]): Array<{ id: string; cue: string; lesson?: string; confidence?: string }>`
 - `boundLibrary(entries: LibraryEntry[], max = 400): LibraryEntry[]` — drop NO_ENTRY rows first, then low confidence, oldest first.
@@ -63,7 +61,9 @@ No stage sees a score, rubric, or grader. Outcomes are behavioural counts.
 - `runImprovementRound(input: RoundInput, deps: RoundDeps): Promise<RoundResult>` with
   - `RoundInput = { roundId: string; agentId: string; tick: number; condition: InteractionCondition; mode: "parallel" | "sequential"; k: number /* 1..5 */; base: AgentHarness; seed: number }`
   - `RoundDeps = { clef: ClefClient; cue: string; knownActionIds: string[]; libraryIndex: ReturnType<typeof libraryIndex>; decide(harness, draws, seed): Promise<{ directives: AgentDirective[]; probabilities: Record<string, Record<string, number>>; model: string; cost: number }>; rollout(directive, run, harness, probabilities?): ExecutionRecord; contrast(references, candidate): BehavioralContrast; deliverableSummary(outcome): string; executionDigest(record): string; propose(references, history): { INV: HarnessEdit[]; DOM: HarnessEdit[] }; applyEdits(base, edits): AgentHarness; validate(harness): HarnessValidation; signature(harness): string }`
-  - The improver imports only types and `Rng`; real implementations are injected. Each `decide` call and each `clef.decide` call counts as one call.
+  - The improver imports only types and `Rng`; real implementations are injected, and it owns the two sampling helpers above. Each `decide` call and each `clef.decide` call counts as one call.
+- `sampleChoice(answer: DecisionAnswer, labels: string[], rng: Rng): string` — inverse CDF in label order.
+- `sampleDistinct(answer: DecisionAnswer, labels: string[], rng: Rng, count: number): string[]` — without replacement, renormalizing.
 - Parallel recursion: references (k draws from one `decide(base)`), Editor (one call; `inv` and `dom` questions over edit ids plus `keep`; omit a scope with no edits), probes (one `decide` per candidate), Composer (one call), successors (one `decide` per distinct non-base composition), selection when k > 1 (one call), Reflector (one call). k = 1 costs 7 calls.
 - Sequential recursion: shared references; k chained steps, each proposing one INV and one DOM candidate from the history, probing, composing checkpoint r over every edit seen so far, and executing it; final selection over references and checkpoints when k > 1.
 - Stage failures: a retryable transport error aborts the round (the Worker then makes the routine decision). A non-retryable stage error or an invalid harness records a fallback and inherits the stage's input (Editor failure = KEEP_BASE).
