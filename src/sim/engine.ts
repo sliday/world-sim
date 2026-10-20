@@ -89,6 +89,7 @@ const CURIOSITY_PER_TICK = 1 / 3_600;
 const CRAFT_INGREDIENT_COST = 2;
 const CARRIED_WATER_SIP = 0.02;
 const CARRIED_WATER_ENERGY = 0.32;
+const TIDAL_REFILL_RATE = 0.002;
 const PROCESSING_RADIUS_SQUARED = 2;
 const ARTIFACT_STORAGE_CAPACITY = 2;
 const INITIAL_ARTIFACT_RESERVE = 1.5;
@@ -1298,6 +1299,9 @@ function advanceEnvironment(state: WorldState): void {
       Math.min(1, tile.contamination + Math.max(0, storm) * 0.00022 - 0.00005),
     );
     tile.richness = Math.min(1, tile.richness + 0.00008);
+    // The sea refills tidal water toward local moisture; a crowded shore still runs dry.
+    if (tile.terrain === "tidal")
+      tile.richness += Math.max(0, tile.moisture - tile.richness) * TIDAL_REFILL_RATE;
   }
 }
 
@@ -1389,6 +1393,9 @@ export function applyDirective(
         agent.y,
         decisionTick,
       );
+    } else if (eligible && session) {
+      // A refused or invalid proposal consumes the attempt; curiosity stays unsatisfied.
+      agent.lastCreativeTick = decisionTick;
     }
   }
   if (
