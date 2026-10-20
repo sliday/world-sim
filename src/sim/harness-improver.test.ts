@@ -319,6 +319,8 @@ describe("Harness² improvement round", () => {
       ["v1", "v2", "lesson", "confidence"],
     ]);
     expect(decided.map((call) => call.draws)).toEqual([1, 1, 1, 1]);
+    // Common random numbers: probes and the successor draw with the references' seed.
+    expect(new Set(decided.map((call) => call.seed)).size).toBe(1);
     expect(result.record.candidates.map((candidate) => candidate.run)).toEqual(["inv-1", "dom-1"]);
     expect(result.record.compositions).toHaveLength(1);
     for (const decision of result.record.compositions[0]!.decisions)
@@ -504,13 +506,107 @@ describe("Harness² improvement round", () => {
         candidates: ["seq-1-inv", "seq-1-ckpt", "seq-2-inv", "seq-2-ckpt"],
         verdict: "helped",
       },
-      { editId: C.id, candidates: ["seq-2-inv", "seq-2-ckpt"], verdict: "confounded" },
+      // seq-2-inv is seq-1-ckpt plus C, so that pair isolates C and the Reflector judges it.
+      { editId: C.id, candidates: ["seq-2-inv", "seq-2-ckpt"], verdict: "helped" },
     ]);
     expect(Object.keys(sequentialClef.calls.at(-1)!.questions)).toEqual([
       "v1",
+      "v2",
       "lesson",
       "confidence",
     ]);
+  });
+
+  it("contrasts a sequential probe with the checkpoint it was applied to", async () => {
+    // One procedure line moves the agent to gather; a second line returns it to the base
+    // directive. Against the base set C would look inert; against seq-1-ckpt it is an effect.
+    const C = procedureEdit("edit-rest", "rest on moss when energy is low");
+    const clef = fakeClef();
+    const drift = await runImprovementRound(
+      input({ mode: "sequential", k: 2 }),
+      fakeWorld(clef.client, {
+        propose: (_, history) => ({ INV: history.length ? [C] : [REFILL], DOM: [] }),
+        directive: (harness) => ({
+          goal: harness.procedure.length === 1 ? "gather" : "explore",
+          targetMaterial: "water",
+        }),
+      }).deps,
+    );
+    const probe = drift.record.candidates.find((candidate) => candidate.run === "seq-2-inv")!;
+    expect(probe.contrast).toMatchObject({ against: ["seq-1-ckpt"], sameDirective: false });
+    expect(drift.rows.find((row) => row.editId === C.id)).toMatchObject({
+      candidates: ["seq-2-inv", "seq-2-ckpt"],
+      verdict: "helped",
+    });
+
+    // A checkpoint that produced nothing cannot clear a probe that also produced nothing while
+    // the base set delivered: the probe stays UNSAFE and the Composer never sees it.
+    const unsafeClef = fakeClef();
+    const barren = await runImprovementRound(
+      input({ mode: "sequential", k: 2 }),
+      fakeWorld(unsafeClef.client, {
+        propose: (_, history) => ({ INV: history.length ? [C] : [REFILL], DOM: [FUNGUS] }),
+        directive: (harness) => ({
+          goal:
+            harness.procedure.length && harness.guidance.length
+              ? "build"
+              : harness.procedure.length
+                ? "gather"
+                : "explore",
+          targetMaterial: "water",
+        }),
+      }).deps,
+    );
+    expect(barren.record.compositions[0]!.run).toBe("seq-1-ckpt");
+    const unsafe = barren.record.candidates.find((candidate) => candidate.run === "seq-2-inv")!;
+    expect(unsafe.contrast).toMatchObject({ against: ["seq-1-ckpt"], unsafe: true });
+    expect(
+      barren.record.compositions[1]!.decisions.find((decision) => decision.editId === C.id),
+    ).toMatchObject({ decision: "dropped", reason: expect.stringContaining("UNSAFE") });
+  });
+
+  it("labels library items by what was checked here and shows the library to the Composer", async () => {
+    const fact: HarnessEdit = {
+      id: "edit-lib-fact",
+      scope: "DOM",
+      component: "memory",
+      op: "add",
+      item: {
+        id: "f-lib",
+        kind: "resource",
+        text: "In this workspace water pools at (3,4)",
+        x: 3,
+        y: 4,
+        verifiedTick: 600,
+      },
+      summary: "library round-1: memory water at (3,4)",
+      moment: { run: "library:round-1", tick: 300, text: "re-verified water at (3,4)" },
+      source: "library",
+      libraryEntryId: "round-1",
+    };
+    const line: HarnessEdit = {
+      ...procedureEdit("edit-lib-line", "rest before long trips"),
+      moment: { run: "library:round-1", tick: 300, text: "adopted under a dry cue" },
+      source: "library",
+      libraryEntryId: "round-1",
+    };
+    const clef = fakeClef();
+    const { deps } = fakeWorld(clef.client, {
+      propose: () => ({ INV: [line], DOM: [fact] }),
+      libraryIndex: [
+        { id: "round-1", cue: CUE, lesson: "Add to memory: water", confidence: "high" },
+      ],
+    });
+    await runImprovementRound(input(), deps);
+
+    const [editor, composer] = clef.calls;
+    expect(editor!.questions.inv!.criteria[line.id]).toContain(
+      "from the library, a hypothesis here",
+    );
+    expect(editor!.questions.dom!.criteria[fact.id]).toContain(
+      "from the library, re-verified here",
+    );
+    expect(composer!.state.library).toEqual([`${CUE} => Add to memory: water (high)`]);
   });
 
   it("writes an experience entry only when the chosen lesson rests on a helped or hurt row", async () => {

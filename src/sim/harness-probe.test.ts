@@ -156,7 +156,7 @@ describe("harness probes", () => {
     expect(contrast.moments.some((moment) => moment.text === "inv-1 rebooted")).toBe(true);
   });
 
-  it("detects a repeated directive by goal, material, action and hold, ignoring the note", () => {
+  it("detects a repeated directive by goal, material, controller, action and hold, ignoring the note", () => {
     const reference = rollout(directive("gather"), "ref-1");
     const same = (changes: Partial<AgentDirective> & { holdMacroturns?: number }) =>
       contrastExecutions([reference], {
@@ -168,6 +168,9 @@ describe("harness probes", () => {
     expect(same({ note: "different words, same activity", source: "instinct" })).toBe(true);
     expect(same({ targetMaterial: "fungus" })).toBe(false);
     expect(same({ goal: "explore" })).toBe(false);
+    // The controller shapes any artifact the activity builds, so a remediate guidance edit that
+    // only changes it is a behavioural change.
+    expect(same({ controllerAction: "remediate" })).toBe(false);
     expect(same({ actionId: "forage" })).toBe(false);
     expect(same({ holdMacroturns: 2 })).toBe(false);
   });

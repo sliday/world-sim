@@ -409,6 +409,12 @@ describe("validateHarness", () => {
       "an unknown guard question",
       { guards: [guard("g", "forbid", "craftActionId", "woven-filter")] },
     ],
+    [
+      "a prototype key as the guard question",
+      {
+        guards: [guard("g", "forbid", "constructor", "x"), guard("h", "forbid", "toString", "x")],
+      },
+    ],
     ["a label outside the vocabulary", { guards: [guard("g", "forbid", "goal", "teleport")] }],
     [
       "a built-in action as an actionId label",

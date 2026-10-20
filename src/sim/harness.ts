@@ -273,7 +273,9 @@ export function validateHarness(
     if (!line.trim() || line.length > HARNESS_LIMITS.procedureLineChars)
       errors.push(`procedure line must have 1-${HARNESS_LIMITS.procedureLineChars} characters`);
   for (const guard of harness.guards) {
-    const labels = vocabulary[guard.effect.question as keyof typeof vocabulary];
+    const labels = Object.hasOwn(vocabulary, guard.effect.question)
+      ? vocabulary[guard.effect.question as keyof typeof vocabulary]
+      : undefined;
     if (!labels) errors.push(`guard ${guard.id} targets unknown question ${guard.effect.question}`);
     else if (!labels.includes(guard.effect.label))
       errors.push(

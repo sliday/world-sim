@@ -191,6 +191,7 @@ function sameDirective(a: HeldDirective, b: HeldDirective): boolean {
   return (
     a.goal === b.goal &&
     a.targetMaterial === b.targetMaterial &&
+    a.controllerAction === b.controllerAction &&
     a.actionId === b.actionId &&
     a.holdMacroturns === b.holdMacroturns
   );

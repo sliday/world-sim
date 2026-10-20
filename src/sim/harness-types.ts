@@ -247,7 +247,8 @@ export interface ExecutionRecord {
 export interface BehavioralContrast {
   run: string;
   against: string[];
-  /** Candidate directive equals a reference directive on goal, material, action and hold. */
+  /** Candidate directive equals a reference directive on goal, material, controller, action
+   * and hold. */
   sameDirective: boolean;
   /** First tick where the focal agent's position or mode differs from reference 1. */
   firstDivergenceTick?: number;

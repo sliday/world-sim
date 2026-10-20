@@ -110,12 +110,12 @@ const STATE_LIMIT = 6_000;
 const SCOPES: readonly HarnessScope[] = ["INV", "DOM"];
 const KEEP = "keep";
 const NO_ENTRY = "NO_ENTRY";
+// Probes and successors reuse the references' seed (common random numbers), so their
+// directive differs from reference 1 only when the harness moved Clef's probabilities.
 const OFFSET = {
   references: 0,
   editor: 1_000,
-  probe: 2_000,
   composer: 3_000,
-  successor: 4_000,
   selection: 5_000,
 } as const;
 
@@ -289,11 +289,29 @@ function changeText(edit: HarnessEdit): string {
   return clip(`${edit.op} ${edit.component}: ${edit.summary}`, 200);
 }
 
+/** Only library memory facts pass verifyFact against this world; other library items are
+ * unchecked hypotheses here. */
+function libraryNote(edit: HarnessEdit): string {
+  if (edit.source !== "library") return "";
+  return edit.component === "memory"
+    ? " | from the library, re-verified here"
+    : " | from the library, a hypothesis here";
+}
+
 function editOption(edit: HarnessEdit): string {
-  return clip(
-    `${changeText(edit)} | moment ${momentText(edit.moment)}${edit.source === "library" ? " | from the library, re-verified here" : ""}`,
-    300,
-  );
+  return clip(`${changeText(edit)} | moment ${momentText(edit.moment)}${libraryNote(edit)}`, 300);
+}
+
+function libraryLines(rows: LibraryIndexRow[]): string[] {
+  return rows
+    .slice(0, 12)
+    .map((row) =>
+      clip(`${row.cue} => ${row.lesson ?? "harness only"} (${row.confidence ?? "no lesson"})`, 200),
+    );
+}
+
+function sameEdits(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((id) => b.includes(id));
 }
 
 function deltaText(contrast: BehavioralContrast): string {
@@ -399,14 +417,7 @@ async function chooseCandidates(
             .map((record) => deps.executionDigest(record)),
         }
       : {}),
-    library: deps.libraryIndex
-      .slice(0, 12)
-      .map((row) =>
-        clip(
-          `${row.cue} => ${row.lesson ?? "harness only"} (${row.confidence ?? "no lesson"})`,
-          200,
-        ),
-      ),
+    library: libraryLines(deps.libraryIndex),
   };
   const response = await guarded(round, step ? `editor step ${step}` : "editor", "KEEP_BASE", () =>
     deps.clef.decide(fitState(state, ["library", "history", "references"]), questions),
@@ -429,7 +440,6 @@ async function probe(
   edit: HarnessEdit,
   run: string,
   from: Current,
-  offset: number,
 ): Promise<ExecutionRecord | undefined> {
   const { input, deps } = round;
   round.tried.add(edit.id);
@@ -440,11 +450,17 @@ async function probe(
     return undefined;
   }
   const decision = await guarded(round, `probe ${run}`, "candidate dropped", () =>
-    deps.decide(harness, 1, stageSeed(input.seed, offset)),
+    deps.decide(harness, 1, stageSeed(input.seed, OFFSET.references)),
   );
   if (!decision) return undefined;
   const record = deps.rollout(decision.directives[0]!, run, harness, decision.probabilities);
-  const contrast = deps.contrast(round.references, record);
+  // A probe on a checkpoint is contrasted with that checkpoint's own rollout, so the contrast
+  // shows what this one edit changed; UNSAFE still holds against the base set as well.
+  const base = deps.contrast(round.references, record);
+  const contrast = from.edits.length
+    ? deps.contrast([round.executions.get(from.run)!.record], record)
+    : base;
+  contrast.unsafe ||= base.unsafe;
   round.executions.set(run, { record, edits: [...from.edits, edit.id], contrast });
   round.candidates.push({ run, scope, edit, contrast });
   round.pool.set(edit.id, { edit, probe: run, contrast });
@@ -572,7 +588,6 @@ async function execute(
   round: Round,
   composition: Composition,
   run: string,
-  offset: number,
   bySignature: Map<string, string>,
   fallback: string,
 ): Promise<string> {
@@ -581,7 +596,7 @@ async function execute(
   const existing = bySignature.get(signature);
   if (existing) return existing;
   const decision = await guarded(round, run, `inherited ${fallback}`, () =>
-    deps.decide(composition.harness, 1, stageSeed(input.seed, offset)),
+    deps.decide(composition.harness, 1, stageSeed(input.seed, OFFSET.references)),
   );
   if (!decision) return fallback;
   const record = deps.rollout(
@@ -605,7 +620,7 @@ async function parallel(round: Round): Promise<string> {
   const picked = await chooseCandidates(round, 0, input.base, [], input.k);
   for (const [index, { scope, edit }] of picked.entries()) {
     const number = picked.slice(0, index + 1).filter((entry) => entry.scope === scope).length;
-    await probe(round, scope, edit, `${scope.toLowerCase()}-${number}`, base, OFFSET.probe + index);
+    await probe(round, scope, edit, `${scope.toLowerCase()}-${number}`, base);
   }
   if (!round.pool.size) return base.run;
   const compositions = await compose(round, "composer", input.k, OFFSET.composer, base, {
@@ -613,17 +628,11 @@ async function parallel(round: Round): Promise<string> {
     harness: harnessLines(input.base),
     baseSet: baseSetText(round),
     references: round.references.map((record) => deps.executionDigest(record)),
+    library: libraryLines(deps.libraryIndex),
   });
   const bySignature = new Map([[deps.signature(input.base), base.run]]);
   for (const [index, composition] of compositions.entries()) {
-    const run = await execute(
-      round,
-      composition,
-      `succ-${index + 1}`,
-      OFFSET.successor + index,
-      bySignature,
-      base.run,
-    );
+    const run = await execute(round, composition, `succ-${index + 1}`, bySignature, base.run);
     round.compositions.push({
       run,
       decisions: composition.decisions,
@@ -644,15 +653,8 @@ async function sequential(round: Round): Promise<string> {
       current.run === "ref-1" ? undefined : round.executions.get(current.run)!.record;
     const picked = await chooseCandidates(round, step, current.harness, history, 1, checkpoint);
     const probes: ExecutionRecord[] = [];
-    for (const [index, { scope, edit }] of picked.entries()) {
-      const record = await probe(
-        round,
-        scope,
-        edit,
-        `seq-${step}-${scope.toLowerCase()}`,
-        current,
-        OFFSET.probe + step * 10 + index,
-      );
+    for (const { scope, edit } of picked) {
+      const record = await probe(round, scope, edit, `seq-${step}-${scope.toLowerCase()}`, current);
       if (record) probes.push(record);
     }
     if (!probes.length) continue;
@@ -669,17 +671,11 @@ async function sequential(round: Round): Promise<string> {
         baseSet: baseSetText(round),
         references: round.references.map((record) => deps.executionDigest(record)),
         history: [...history].reverse().map((record) => deps.executionDigest(record)),
+        library: libraryLines(deps.libraryIndex),
       },
       step,
     );
-    const run = await execute(
-      round,
-      composition!,
-      `seq-${step}-ckpt`,
-      OFFSET.successor + step * 10,
-      bySignature,
-      current.run,
-    );
+    const run = await execute(round, composition!, `seq-${step}-ckpt`, bySignature, current.run);
     round.compositions.push({
       run,
       decisions: composition!.decisions,
@@ -741,11 +737,19 @@ async function reflect(
     const carriers = [...round.executions].filter(([, execution]) =>
       execution.edits.includes(edit.id),
     );
+    // An execution isolates the edit when another execution carries exactly its other edits,
+    // such as a sequential probe and the checkpoint it was applied to.
+    const isolated = carriers.some(([, carrier]) => {
+      const without = carrier.edits.filter((id) => id !== edit.id);
+      return [...round.executions.values()].some(
+        (other) => other !== carrier && sameEdits(other.edits, without),
+      );
+    });
     const override: EditVerdict | undefined = carriers.every(
       ([, execution]) => execution.contrast?.sameDirective,
     )
       ? "no observed effect"
-      : carriers.some(([, execution]) => execution.edits.length === 1)
+      : isolated
         ? undefined
         : "confounded";
     const row: EditVerdictRow = {

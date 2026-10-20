@@ -66,8 +66,12 @@ interface ClefRequest {
 }
 
 /** Answers every question with probabilities that fall with label order: the first of n labels
- * weighs n, the last weighs 1. Logs every request body it receives. */
-function labelOrderFetch(log: ClefRequest[]): typeof fetch {
+ * weighs n, the last weighs 1. A `steered` question gets the reverse order, standing in for a
+ * model that reads the harness text in it. Logs every request body it receives. */
+function labelOrderFetch(
+  log: ClefRequest[],
+  steered: (question: DecisionQuestion) => boolean = () => false,
+): typeof fetch {
   return (async (_url: unknown, init?: { body?: unknown }) => {
     const body = JSON.parse(String(init?.body)) as ClefRequest & { model: string };
     log.push({ state: body.state, questions: body.questions });
@@ -75,15 +79,20 @@ function labelOrderFetch(log: ClefRequest[]): typeof fetch {
       Object.entries(body.questions).map(([id, question]) => {
         const labels = Object.keys(question.criteria);
         const total = (labels.length * (labels.length + 1)) / 2;
+        const reversed = steered(question);
         const probabilities = Object.fromEntries(
-          labels.map((label, index) => [label, (labels.length - index) / total]),
+          labels.map((label, index) => [
+            label,
+            (reversed ? index + 1 : labels.length - index) / total,
+          ]),
         );
+        const choice = reversed ? labels.at(-1)! : labels[0]!;
         return [
           id,
           {
             type: "choice",
-            choice: labels[0],
-            confidence: probabilities[labels[0]!],
+            choice,
+            confidence: probabilities[choice],
             probabilities,
           },
         ];
@@ -204,7 +213,13 @@ function wireRound(
   const decisionRequests: ClefRequest[] = [];
   const calls = { decide: 0, clef: 0 };
   const stageClient = createClefClient("test-key", labelOrderFetch(stageRequests));
-  const decisionClient = createClefClient("test-key", labelOrderFetch(decisionRequests));
+  // Clef follows a harness procedure line: it reverses its preference on the goal it extends.
+  const decisionClient = createClefClient(
+    "test-key",
+    labelOrderFetch(decisionRequests, (question) =>
+      question.instructions.includes("Harness procedure:"),
+    ),
+  );
   const deps: RoundDeps = {
     clef: {
       decide(state, questions) {
@@ -272,13 +287,19 @@ function wireRound(
     contrast: contrastExecutions,
     deliverableSummary,
     executionDigest,
-    // Sequential steps diagnose the checkpoints and probes in the history too.
+    // Sequential steps diagnose the checkpoints and probes in the history too. A history run
+    // that repeated an earlier directive would count the same failure twice, so only history
+    // runs with a new directive join the references.
     propose: (references, history) =>
       proposeCandidateEdits({
         world,
         agentId,
         features,
-        references: [...references, ...history],
+        references: history.reduce(
+          (runs, record) =>
+            contrastExecutions(runs, record).sameDirective ? runs : [...runs, record],
+          references,
+        ),
         library: visible,
         base: baseHarness(),
         knownActionIds,
