@@ -4,9 +4,11 @@ import {
   clampOverlayAnchor,
   easeToward,
   fitOverlayText,
+  glideResponseMs,
   normalizeSettled,
   wrappedTarget,
 } from "./motion";
+import { currentMsPerTick } from "./tick-age";
 import type {
   Agent,
   Artifact,
@@ -96,6 +98,8 @@ export function createWorldSketch(
   remove: () => void;
 } {
   let world = initial;
+  let glideMs = glideResponseMs(currentMsPerTick(initial.tickEpochs), 0);
+  let lastTickAt: number | undefined;
   let terrainLayer: p5.Graphics | undefined;
   let worldCanvas: HTMLCanvasElement | undefined;
   let selectedAgentId: string | null = null;
@@ -145,7 +149,7 @@ export function createWorldSketch(
     p.draw = () => {
       if (!terrainLayer) return;
       p.background("#101e20");
-      advanceVisualAgents(visualAgentPositions, p.deltaTime);
+      advanceVisualAgents(visualAgentPositions, p.deltaTime, glideMs);
       updateCamera(p, world, camera, selectedAgentId, visualAgentPositions);
       p.push();
       p.translate(p.width / 2, p.height / 2);
@@ -182,6 +186,12 @@ export function createWorldSketch(
       if (snapshot.seed !== world.seed || snapshot.terrain.length !== world.terrain.length) {
         terrainLayer?.remove();
         terrainLayer = buildTerrainLayer(sketch, snapshot.terrain, snapshot.seed);
+      }
+      if (snapshot.tick !== world.tick) {
+        const now = performance.now();
+        const gap = snapshot.tick > world.tick && lastTickAt !== undefined ? now - lastTickAt : 0;
+        glideMs = glideResponseMs(currentMsPerTick(snapshot.tickEpochs), gap);
+        lastTickAt = now;
       }
       syncVisualAgentTargets(snapshot, visualAgentPositions);
       world = snapshot;
@@ -248,10 +258,14 @@ function syncVisualAgentTargets(
   for (const id of positions.keys()) if (!liveIds.has(id)) positions.delete(id);
 }
 
-function advanceVisualAgents(positions: Map<string, VisualAgentPosition>, elapsedMs: number): void {
+function advanceVisualAgents(
+  positions: Map<string, VisualAgentPosition>,
+  elapsedMs: number,
+  responseMs: number,
+): void {
   for (const position of positions.values()) {
-    position.x = easeToward(position.x, position.targetX, elapsedMs);
-    position.y = easeToward(position.y, position.targetY, elapsedMs);
+    position.x = easeToward(position.x, position.targetX, elapsedMs, responseMs);
+    position.y = easeToward(position.y, position.targetY, elapsedMs, responseMs);
     [position.x, position.targetX] = normalizeSettled(position.x, position.targetX, WORLD_WIDTH);
     [position.y, position.targetY] = normalizeSettled(position.y, position.targetY, WORLD_HEIGHT);
   }
