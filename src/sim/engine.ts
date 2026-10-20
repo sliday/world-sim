@@ -12,6 +12,7 @@ import {
   updateAgentScript,
   validateActionProposal,
 } from "./action-sandbox";
+import { emptyOccupancy, encodeOccupancyHeat, ensureOccupancy } from "./occupancy";
 import {
   emptyFossilRecord,
   ensurePruningState,
@@ -100,6 +101,7 @@ const CURIOSITY_PER_TICK = 1 / 3_600;
 const CRAFT_INGREDIENT_COST = 2;
 const CARRIED_WATER_SIP = 0.02;
 const CARRIED_WATER_ENERGY = 0.32;
+const TIDAL_REFILL_RATE = 0.002;
 const PROCESSING_RADIUS_SQUARED = 2;
 const ARTIFACT_STORAGE_CAPACITY = 2;
 const INITIAL_ARTIFACT_RESERVE = 1.5;
@@ -339,6 +341,7 @@ export function createInitialWorld(
     discoveryFrontierTrackedTicks: 0,
     stations: createStations(terrain, stationRng),
     events: [],
+    occupancy: emptyOccupancy(0),
     actionLibrary: baseActionLibrary(),
     fossils: emptyFossilRecord(),
     messages: [],
@@ -420,6 +423,7 @@ export function ensureAgentOperatingSystem(state: WorldState): WorldState {
   );
   state.discoveryFrontierArea ??= 0;
   state.discoveryFrontierTrackedTicks ??= 0;
+  state.occupancy = ensureOccupancy(state.occupancy, state.tick);
   if (state.agents.length < state.targetAgentCount) {
     const rng = new Rng(state.rngState);
     while (state.agents.length < state.targetAgentCount)
@@ -737,6 +741,7 @@ function roam(agent: Agent, rng: Rng): void {
 
 function recordTrail(agent: Agent, state: WorldState): void {
   agent.trajectory.observedTicks += 1;
+  state.occupancy.modes[agent.mode][tileIndex(agent.x, agent.y)] += 1;
   const artifact = nearest(agent, state.artifacts);
   if (artifact && isArtifactContact(agent, artifact)) agent.trajectory.artifactContactTicks += 1;
   const previous = agent.trail.at(-1);
@@ -1380,6 +1385,9 @@ function advanceEnvironment(state: WorldState): void {
       Math.min(1, tile.contamination + Math.max(0, storm) * 0.00022 - 0.00005),
     );
     tile.richness = Math.min(1, tile.richness + 0.00008);
+    // The sea refills tidal water toward local moisture; a crowded shore still runs dry.
+    if (tile.terrain === "tidal")
+      tile.richness += Math.max(0, tile.moisture - tile.richness) * TIDAL_REFILL_RATE;
   }
 }
 
@@ -1478,6 +1486,9 @@ export function applyDirective(
         agent.y,
         decisionTick,
       );
+    } else if (eligible && session) {
+      // A refused or invalid proposal consumes the attempt; curiosity stays unsatisfied.
+      agent.lastCreativeTick = decisionTick;
     }
   }
   if (
@@ -1755,8 +1766,10 @@ export function publicSnapshot(
   nullclawPolicy = true,
 ): PublicWorldSnapshot {
   state.metrics = calculateMetrics(state);
+  const { occupancy, ...rest } = state;
   return {
-    ...structuredClone(state),
+    ...structuredClone(rest),
+    heat: encodeOccupancyHeat(occupancy),
     diary: [],
     engine: {
       mode: openRouterEnabled ? "openrouter-assisted" : "deterministic",

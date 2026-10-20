@@ -177,6 +177,72 @@ a:focus-visible {
   gap: 12px;
 }
 
+.pixel-button[aria-pressed="true"] {
+  background: var(--acid);
+  transform: translate(2px, 2px);
+  box-shadow: 2px 2px 0 var(--ink);
+}
+
+/* Anchored under the button bar, however many rows it wraps to. */
+.heat-key {
+  position: absolute;
+  z-index: 2;
+  top: calc(100% + 8px);
+  right: 0;
+  display: grid;
+  gap: 6px;
+  width: min(292px, calc(100vw - 44px));
+  padding: 10px 12px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.heat-key-title {
+  color: rgba(242, 237, 207, 0.58);
+}
+
+.heat-key-ramp,
+.heat-key-activities span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: rgba(242, 237, 207, 0.76);
+}
+
+.heat-key-ramp i {
+  flex: 1;
+  height: 8px;
+  border: 1px solid rgba(242, 237, 207, 0.24);
+}
+
+.heat-key-activities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 9px;
+}
+
+.heat-key-activities span {
+  gap: 5px;
+}
+
+.heat-key-activities b {
+  width: 8px;
+  height: 8px;
+}
+
+@media (max-width: 900px) {
+  .heat-key {
+    width: min(292px, calc(100vw - 28px));
+  }
+}
+
+@media (max-width: 600px) {
+  #heat-button {
+    order: 1;
+  }
+}
+
 .engine-status {
   padding: 10px 12px;
   color: rgba(242, 237, 207, 0.76);
