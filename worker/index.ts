@@ -1,12 +1,14 @@
 import { DurableObject } from "cloudflare:workers";
 import agentCore from "./nullclaw/agent_core.wasm";
 import { generateAgentName } from "../src/sim/names";
+import { withTickRate } from "../src/sim/tick-age";
 import {
   advanceWorld,
   applyDirective,
   calculateMetrics,
   createInitialWorld,
   decisionAgentsDue,
+  decisionHoldStats,
   decisionObservation,
   deliverMessagesDue,
   ensureAgentOperatingSystem,
@@ -641,6 +643,12 @@ export class WorldRoom extends DurableObject<Env> {
       // A public observatory should open on a living ecology, not an empty loading screen.
       advanceWorld(this.world, 480);
     }
+    // Ticks after this one run at the configured interval; age labels read this rate history.
+    this.world.tickEpochs = withTickRate(
+      this.world.tickEpochs,
+      this.world.tick,
+      positiveInteger(this.env.ALARM_INTERVAL_MS, 1_000, 60_000),
+    );
     this.seedAgentMemories(this.world);
     this.ensureDiaryState(this.world);
     return this.world;
@@ -732,6 +740,7 @@ export class WorldRoom extends DurableObject<Env> {
       worldDecisionIntervalMs: positiveInteger(this.env.ALARM_INTERVAL_MS, 1_000, 60_000),
       decisionsPerWorldTick: world.agents.length,
       modelMacroturnIntervalTicks: MODEL_MACROTURN_INTERVAL_TICKS,
+      decisionHolds: decisionHoldStats(world),
       worldDiaryIntervalTicks: WORLD_DIARY_INTERVAL_TICKS,
       worldDiaryEntries: this.readWorldDiary(168).length,
       nextWorldDiaryTick: diaryState.nextTick,
@@ -1205,7 +1214,7 @@ export class WorldRoom extends DurableObject<Env> {
             {
               role: "system",
               content:
-                "You are one initially identical embodied agent in a persistent material world. This is your fixed scheduled macroturn. The activity you choose now repeats cyclically until your next AI opportunity in 60 world ticks. SOUL.md is policy, USER.md names the beneficiary, and MEMORY.md is fallible experience. Choose an existing actionId from availableActions and one Unicode icon. Carried water is automatically consumed when energy is low. Gathering tidal water is an emergency refill, not the default: choose it when energy is below 0.55 and water inventory is below 1.5; once water inventory reaches 3, choose an underrepresented non-water material, build, inspect, maintain, explore, craft, or create. Never choose water merely because the local tile is wet. Building is physically processed: carried fungus must reach an assay, mineral a foundry, cellulose a weave station, and chitin a grind station before construction can succeed. A pending craftingTarget is a commitment: continue goal craft or create until its missing materials are gathered and the thing is built. MaterialPurposes explains why inventory is reserved. Use goal craft with craftActionId to learn one listed craftableAction. Outside the emergency-water condition, when creativeSessionEligible is true and energy is above 0.25, choose goal create: propose one genuinely new reusable action, two physical ingredients, and a concrete purpose. Otherwise return creativeSession as null. This is a Creative Session, not instant invention. The deterministic sandbox must gather and consume both ingredients before registering the action; failed or duplicate mixes do not satisfy curiosity. New programs may compose only listed bounded primitives and cannot create resources or declare outcomes. speech must exchange one useful observed fact in one 3-8 word sentence of basic caveman telegraphic English, like 'Water low here, seek tidal.' Never use two sentences. The deterministic sandbox executes one primitive per tick and the world decides consequences. note: max 12 words.",
+                "You are one initially identical embodied agent in a persistent material world. This is your fixed scheduled macroturn. The activity you choose now repeats cyclically until your next AI reassessment, after the chosen hold of 1 to 8 macroturns of 60 world ticks, or earlier if the simulator wakes you. SOUL.md is policy, USER.md names the beneficiary, and MEMORY.md is fallible experience. Choose an existing actionId from availableActions and one Unicode icon. Carried water is automatically consumed when energy is low. Gathering tidal water is an emergency refill, not the default: choose it when energy is below 0.55 and water inventory is below 1.5; once water inventory reaches 3, choose an underrepresented non-water material, build, inspect, maintain, explore, craft, or create. Never choose water merely because the local tile is wet. Building is physically processed: carried fungus must reach an assay, mineral a foundry, cellulose a weave station, and chitin a grind station before construction can succeed. A pending craftingTarget is a commitment: continue goal craft or create until its missing materials are gathered and the thing is built. MaterialPurposes explains why inventory is reserved. Use goal craft with craftActionId to learn one listed craftableAction. Outside the emergency-water condition, when creativeSessionEligible is true and energy is above 0.25, choose goal create: propose one genuinely new reusable action, two physical ingredients, and a concrete purpose. Otherwise return creativeSession as null. This is a Creative Session, not instant invention. The deterministic sandbox must gather and consume both ingredients before registering the action; failed or duplicate mixes do not satisfy curiosity. New programs may compose only listed bounded primitives and cannot create resources or declare outcomes. speech must exchange one useful observed fact in one 3-8 word sentence of basic caveman telegraphic English, like 'Water low here, seek tidal.' Never use two sentences. The deterministic sandbox executes one primitive per tick and the world decides consequences. note: max 12 words.",
             },
             {
               role: "system",

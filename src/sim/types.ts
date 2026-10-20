@@ -87,6 +87,7 @@ export interface AgentDirective {
   creativeSession?: CreativeSessionProposal;
   artifactSpecification?: ArtifactSpecification;
   speech?: string;
+  holdMacroturns?: 1 | 2 | 4 | 8;
 }
 
 export interface ArtifactSpecification {
@@ -187,6 +188,7 @@ export interface Agent {
   decisionPhase: number;
   nextDecisionTick: number;
   scriptCursor: number;
+  failedPrimitiveStreak?: number;
   trail: Vec2[];
   trajectory: AgentTrajectory;
   color: number;
@@ -323,6 +325,12 @@ export interface WorldDiaryEntry {
   createdAt: number;
 }
 
+/** Wall-clock length of each world tick from `fromTick` until the next epoch begins. */
+export interface TickEpoch {
+  fromTick: number;
+  msPerTick: number;
+}
+
 export interface WorldMetrics {
   activeAgents: number;
   artifacts: number;
@@ -354,6 +362,7 @@ export interface WorldState {
   rngState: number;
   tick: number;
   lastAdvancedAt: number;
+  tickEpochs: TickEpoch[];
   terrain: Tile[];
   agents: Agent[];
   artifacts: Artifact[];
@@ -375,6 +384,8 @@ export interface WorldState {
     lastError?: string;
     decisionBlockedUntil?: number;
     generationBlockedUntil?: number;
+    holdWakeUps: number;
+    holdSkipsScheduled: number;
   };
 }
 

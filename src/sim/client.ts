@@ -3,6 +3,10 @@ import type { PublicWorldSnapshot, WorldState } from "./types";
 
 export type WorldClientStatus = "loading" | "authoritative" | "stale" | "fallback";
 
+// The browser fallback advances two ticks every 160 ms, so its ages use an 80 ms tick.
+const FALLBACK_STEP_MS = 160;
+const FALLBACK_TICKS_PER_STEP = 2;
+
 type SnapshotListener = (snapshot: PublicWorldSnapshot) => void;
 type StatusListener = (status: WorldClientStatus) => void;
 
@@ -151,12 +155,15 @@ export class WorldClient {
     }
     this.setStatus("fallback");
     this.fallbackState = createInitialWorld(260826081);
+    this.fallbackState.tickEpochs = [
+      { fromTick: 0, msPerTick: FALLBACK_STEP_MS / FALLBACK_TICKS_PER_STEP },
+    ];
     advanceWorld(this.fallbackState, 360);
     this.publish(publicSnapshot(this.fallbackState, false, "openrouter/free", true));
     this.fallbackTimer = window.setInterval(() => {
       if (!this.fallbackState) return;
-      advanceWorld(this.fallbackState, 2);
+      advanceWorld(this.fallbackState, FALLBACK_TICKS_PER_STEP);
       this.publish(publicSnapshot(this.fallbackState, false, "openrouter/free", true));
-    }, 160);
+    }, FALLBACK_STEP_MS);
   }
 }
