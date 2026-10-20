@@ -9,7 +9,7 @@ This is a live implementation track toward the paper's core mechanics, not a rep
 - 100 policy-equivalent agents receive local observations; a fresh world initializes them with identical policy and energy.
 - Every agent stays with one cyclic, bounded activity between fixed model macroturns and attempts exactly one primitive on each world tick.
 - Macroturn phases are persistent and staggered: every agent gets one AI reassessment opportunity per 60 authoritative ticks, with at most two agents due on any tick.
-- Every 3,600 authoritative ticks, an observer model turns the persisted event trace into a factual 1–5 line world diary focused on new actions, mapped resources, inheritance, adoption, and meaningful change.
+- Every 3,600 authoritative ticks (about 10 hours at the current 10-second tick), an observer model turns the persisted event trace into a factual 1–5 line world diary focused on new actions, mapped resources, inheritance, adoption, and meaningful change.
 - A toroidal 96×72 planet has finite resources, facilities, moisture, contamination, and persistent artifacts.
 - Agents can explore, gather, construct, inspect, maintain, craft learned skills, and fork constrained artifact controllers.
 - New artifacts can only be constructed near the material's matching processing station (wash, assay, foundry, weave, or grind); the artifact records that physical process and station provenance. Legacy artifacts remain intact with process provenance explicitly unavailable.
@@ -25,7 +25,7 @@ This is a live implementation track toward the paper's core mechanics, not a rep
 - Schema v9 queues addressed speech until the recipient's next fixed macroturn. Sending remains visible immediately, but heard context and durable recipient memory are created only when that scheduled observation occurs, so communication cannot purchase an extra model call.
 - Schema v10 adds persisted full-culture, no-communication, and no-explicit-culture engine conditions. Ablations remove messaging, global recipe sharing, artifact specifications, and/or program inheritance from executable consequences rather than relying on prompt compliance; production remains the full-culture world. Matched multi-seed study orchestration is still required before comparing conditions.
 - Schema v11 supports matched 50-, 100-, and 200-agent worlds with population-aware staggered phases. Terrain, processing stations, corresponding initial agent positions, and phases remain identical across interaction conditions within a population–seed block; production remains the persistent N=100 world.
-- Artifacts remain in the world, can be physically encountered by later agents, and retain executable lineage.
+- Artifacts remain in the world while agents use them, can be physically encountered by later agents, and retain executable lineage; unused ruins erode into a fossil record.
 - Bounded movement trails expose mean path length, regions visited, artifact-contact rate, and spatial entropy without allowing history to grow unbounded.
 - Private SQLite episodic logs retain up to approximately 250,000 tokens per agent with deterministic compaction.
 - Consecutive identical memories collapse into one lossless tick-ranged run (`T120–T420 ×6`); any intervening event starts a new run.
@@ -35,7 +35,7 @@ This is a live implementation track toward the paper's core mechanics, not a rep
 
 - **Client:** p5.js + TypeScript + Vite+
 - **World authority:** one SQLite-backed Cloudflare Durable Object
-- **Live updates:** hibernatable WebSockets; one-second alarm-driven deterministic ticks
+- **Live updates:** hibernatable WebSockets; alarm-driven deterministic ticks every 10 seconds (`ALARM_INTERVAL_MS`)
 - **Agent policy:** NullClaw-derived Zig policy core compiled to WebAssembly
 - **Agent decisions:** `cloudflare/clef-flash` through the OpenRouter Decisions API, with the existing `OPENROUTER_API_KEY`.
 - **Text generation:** `openrouter/free` for artifact specifications, creative proposals, and the world diary.
@@ -45,7 +45,7 @@ The full native NullClaw daemon does not run inside a Cloudflare Worker. This pr
 
 ## Decision mechanics
 
-Clef chooses the goal, material, controller, and learned activity in one request per agent. Independent agents share the existing pool of six requests.
+Clef chooses the goal, material, controller, learned activity, and hold length in one request per agent. Independent agents share the existing pool of six requests.
 Clef rejects choice questions with fewer than two options, so the Worker answers forced choices locally and sends only open ones.
 The Worker validates answer IDs, allowed labels, confidence, and probability distributions before it commits a directive.
 
@@ -60,15 +60,30 @@ Clef Flash is the 9B member of Cloudflare's Clef decision model family, a Qwen3.
 A live probe on 2026-10-19 accepted seven decisions in 0.3 to 1 second each, at about $0.00003 per decision. The Worker records the returned model on each accepted directive.
 Local tests and a live API probe validate the contract; they do not establish gains in decision quality, cost, or latency.
 
-The scheduler follows SwarmWorld's fixed per-agent macroturn phases rather than selecting whichever agents look stale. The paper's primary population study used a 50-tick interval; this observatory deliberately uses 60 ticks so one authoritative tick approximates one second and every agent gets one AI opportunity per minute. A macroturn is resolved before its candidate world tick, and retryable provider failures preserve the activity and scheduled tick instead of silently skipping an agent.
+The scheduler follows SwarmWorld's fixed per-agent macroturn phases rather than selecting whichever agents look stale. The paper's primary population study used a 50-tick interval; this observatory uses 60 ticks. The Worker advances one authoritative tick every 10 seconds, so every agent gets about one AI opportunity every 10 minutes; with the holds described below, a bot reassesses every 10 to 80 minutes. Earlier production ticks ran at one second, so the world's history mixes both rates. The Worker records each configured rate as a tick epoch in the world state, and age labels convert ticks to wall-clock time through those epochs. A macroturn is resolved before its candidate world tick, and retryable provider failures preserve the activity and scheduled tick instead of silently skipping an agent.
 
-There is one explicit product-driven variation from Algorithm 1: SwarmWorld consumes a finite action queue and waits when it empties, while this world cycles a bounded activity program until the next macroturn. That variation implements the requirement that a bot remain engaged between reassessments. The consequence boundary remains the same: the model chooses a validated activity, and the deterministic simulator attempts exactly one primitive per agent per tick.
+The first explicit product-driven variation from Algorithm 1 concerns the action queue: SwarmWorld consumes a finite action queue and waits when it empties, while this world cycles a bounded activity program until the next macroturn. That variation implements the requirement that a bot remain engaged between reassessments. The consequence boundary remains the same: the model chooses a validated activity, and the deterministic simulator attempts exactly one primitive per agent per tick.
 
-The hourly world diary is an observer layer over Algorithm 1's `AppendTrace`, not agent memory or an authoritative consequence. Raw notable events are persisted between diary checkpoints; the model may organize only supplied evidence, and diary failure never blocks world time. Tracking begins at migration, so the first entry does not fabricate earlier history.
+The second variation cuts model cost. SwarmWorld spends a model call on every macroturn; here Clef also answers `holdMacroturns` with 1, 2, 4, or 8, and the agent keeps its activity for that many macroturns before its next call. Clef picks long holds for stable work, such as gathering a plentiful material toward a stock target, a long crafting commitment, or long travel to a distant station, and short holds for low energy, unfamiliar terrain, inspection, or an activity about to finish. The Worker forces a hold of 1 when energy is below 0.55 and carried water is below 1.5. Instinct directives and missing holds count as 1, and a failed decision keeps one macroturn. Phases stay fixed: a hold spans whole macroturns, so a held agent skips its phase ticks and at most two agents remain due on any tick.
+
+The deterministic simulator ends a hold early, without a model call, in three cases: energy falls below 0.55 with carried water below 1.5 or the agent reboots; every primitive in its program fails for a full program cycle; or its crafting commitment completes or fails. In each case the held activity has stopped matching the world. A wake-up moves the next decision to the agent's next phase tick after the current tick and only ever earlier, so no agent becomes due twice or off its phase. Queued speech reaches a holding agent at its next actual decision, early or not. `/api/health` reports `decisionHolds`: the mean scheduled hold, the wake-up count, and decisions avoided, meaning phase ticks that passed without a call because the agent held. A deterministic replay of one hour with every hold set to 8 made 1,167 of 6,000 possible calls; that replay does not predict which holds Clef will choose.
+
+The world diary is an observer layer over Algorithm 1's `AppendTrace`, not agent memory or an authoritative consequence. Raw notable events are persisted between diary checkpoints; the model may organize only supplied evidence, and diary failure never blocks world time. Tracking begins at migration, so the first entry does not fabricate earlier history.
 
 `GET /api/held-out-assay` freezes the current world into eight exact clones, removes all agents, applies deterministic paired schedules seeded 9201–9208 across 288 evaluation ticks, and reports balanced service coverage per schedule plus the mean. The assay never mutates the discovery world. Its disturbance implementation follows the paper's contamination, drought, damage, and resource-variation structure, but remains this observatory's explicit adaptation rather than a reproduction of the authors' unpublished schedule payloads.
 
 Crafting borrows Infinite Craft's legible pairwise-combination loop, but not its unconstrained ontology. A Creative Session may propose a material pair and a reusable program only from the typed action DSL. The host records that proposal as a physical commitment, seeks missing ingredients, and registers the skill only after both ingredients are consumed. Duplicate or invalid mixes consume the attempt without satisfying curiosity. Successful recipes become craftable knowledge that another agent can reproduce from the same materials. This preserves SwarmWorld's separation of cognition, transactional validation, deterministic execution, memory, and trace append.
+
+## Pruning and forgetting
+
+Culture decays unless agents use it. The engine checks once per macroturn, under every interaction condition.
+
+- Artifacts erode. The engine removes an artifact once it is dead (health at or below the 0.05 service cutoff) and no agent has used, inspected, maintained, adopted, or forked it for 21,600 ticks (360 macroturns, about 60 hours at the current 10-second tick). Any touch restarts the clock.
+- Agents forget. An agent loses a learned skill it has not run or crafted for 43,200 ticks (720 macroturns, about 5 days at the current 10-second tick), the way a speaker loses an unused language. Agents keep the seven base actions, any skill they are running, and any recipe they are committed to crafting.
+- Skills go extinct. When no agent knows a learned skill and none is crafting it, the engine drops it from the action library, the Craft Tree, and the recipes agents can learn. A later Creative Session that builds the same program registers it again as a novel skill with the same id, satisfies curiosity, and logs it as rediscovered.
+- Fossils keep the history. The snapshot's `fossils` field holds the newest 128 extinct skills (author, recipe, program, creation and extinction ticks, every agent that knew and forgot it) and the newest 256 removed artifacts (creator, authors, contributors, adopters, service inspectors, parent, generation, and build, last-touch, and removal ticks), plus all-time counts. `/api/health` reports the counts. Agents never observe fossils, so pruning adds no culture channel to the ablations.
+
+Migration starts each clock from recorded evidence. An artifact no agent ever touched starts at its build tick or its latest child's fork tick, and a skill its author never ran starts at its creation tick. Every other clock starts at migration. On the T400,389 snapshot, the first pass removes 104 never-touched artifacts and 19 skills known only by their idle authors. If the current activity mix held, the other 36 artifacts would erode 21,600 ticks later and the last 17 learned skills would go extinct 43,200 ticks later.
 
 ## Hierarchy ranking
 
@@ -81,7 +96,7 @@ Crafting borrows Infinite Craft's legible pairwise-combination loop, but not its
 - Below 10 links the page shows no ranking, and below 5 fully resolved triads it shows no transitivity. `src/sim/hierarchy.ts` returns those metrics as undefined, never as 0.
 - The Durable Object writes a snapshot to its SQLite `hierarchy_snapshots` table every 600 ticks. Past 720 rows it drops every other row in the older half, so the series keeps its first row and full span at coarser spacing. `GET /api/hierarchy` returns the current ranking and the series.
 - Tracking starts at deploy. The first row is a labeled baseline of the state at that moment, which already includes links built earlier; no earlier history is reconstructed.
-- The ranking reads artifacts and skills that still exist. `computeHierarchy` accepts optional fossil records so retired artifacts and extinct skills keep their links once an archive supplies them.
+- Pruning does not erase prestige. `computeHierarchy` reads `world.fossils`, so eroded artifacts keep their users, inspectors, repairers, and forks, and extinct skills keep every bot that knew them. A bot that forgot a living skill (`forgottenBy`) still counts as a learner. Only fossils pushed out of the 256-artifact and 128-skill archive drop out.
 - Bots never see their rank. The hierarchy module feeds no observation, memory, or model prompt, and a test checks that measuring leaves the world unchanged.
 - Without the Worker, the page computes the current ranking from the local fallback simulation and marks history unavailable.
 

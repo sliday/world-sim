@@ -146,7 +146,7 @@ app.innerHTML = `
     <article class="about-content">
       <p class="eyebrow">AN AUTONOMOUS PLANET · NO PLAYERS · NO ASSIGNED ROLES</p>
       <h1>THEY DON’T NEED TO<br>UNDERSTAND EACH OTHER.<br><em>THE WORLD REMEMBERS.</em></h1>
-      <p class="lede">One hundred policy-equivalent little scientists inhabit a persistent planet. Nobody tells them who should explore, who should build, or what to invent. Every second, each executes a bounded local decision while staggered model macroturns revise plans. Each carries a small soul, user contract, executable action script, and a durable episodic log capped near 250,000 tokens.</p>
+      <p class="lede">One hundred policy-equivalent little scientists inhabit a persistent planet. Nobody tells them who should explore, who should build, or what to invent. Every ten seconds, each executes a bounded local decision while staggered model macroturns revise plans. Each carries a small soul, user contract, executable action script, and a durable episodic log capped near 250,000 tokens.</p>
 
       <div class="explain-grid">
         <section><span>01</span><i class="hn hn-location-pin"></i><h2>THEY WANDER</h2><p>Agents see only their local patch. Nearby bots trade one short telegraphic sentence; heard facts enter memory.</p></section>
@@ -244,7 +244,7 @@ function metric(id: string, value: string): void {
 }
 
 function freshnessMarkup(nowTick: number, createdTick: number): string {
-  const age = formatTickAge(nowTick, createdTick);
+  const age = formatTickAge(nowTick, createdTick, latestSnapshot.tickEpochs);
   return `<b class="freshness ${age.isNew ? "new" : ""}">${age.label}</b>`;
 }
 
@@ -258,6 +258,7 @@ function eventMarkup(event: WorldEvent, newest: boolean, nowTick: number): strin
     decision: "hn-sparkles",
     craft: "hn-code-block",
     creative: "hn-sparkles",
+    prune: "hn-archive",
   };
   return `<div class="event ${newest ? "newest" : ""}"><i class="hn ${icon[event.kind]}"></i><p>${escapeHtml(event.text)}<span>T${event.tick.toLocaleString()} · ${freshnessMarkup(nowTick, event.tick)}</span></p></div>`;
 }
@@ -389,7 +390,7 @@ function craftGraphNodeMarkup(
   }
   const action = pairing.actions.find((candidate) => candidate.definition.id === node.actionId);
   if (!action) return "";
-  const age = formatTickAge(snapshot.tick, action.definition.createdTick);
+  const age = formatTickAge(snapshot.tick, action.definition.createdTick, snapshot.tickEpochs);
   return `<button class="craft-graph-node action" style="${style}" type="button" data-node-id="${node.id}" aria-label="${escapeHtml(action.definition.name)}, known by ${action.knownBy} agents"><span>${escapeHtml(action.definition.icon)} SKILL · ${age.label}</span><strong>${escapeHtml(action.definition.name)}</strong><small>KNOWN BY ${action.knownBy} / ${snapshot.agents.length} · ${action.definition.uses} USES</small></button>`;
 }
 
@@ -470,7 +471,7 @@ function renderRecentArtifacts(snapshot: PublicWorldSnapshot): void {
   recentArtifactList.innerHTML =
     artifacts
       .map((artifact) => {
-        const age = formatTickAge(snapshot.tick, artifact.builtAt);
+        const age = formatTickAge(snapshot.tick, artifact.builtAt, snapshot.tickEpochs);
         const failedValidation = Object.entries(artifact.validation ?? {})
           .filter(([, passed]) => !passed)
           .map(([gate]) => gate.replace(/([a-z])([A-Z])/gu, "$1 $2").toLowerCase());
@@ -525,7 +526,7 @@ function craftTreeProjectionSignature(
       artifact.flux?.waterCollected.toFixed(1),
       artifact.flux?.contaminationRemoved.toFixed(1),
       artifact.flux?.reserveConsumed.toFixed(1),
-      formatTickAge(snapshot.tick, artifact.builtAt).label,
+      formatTickAge(snapshot.tick, artifact.builtAt, snapshot.tickEpochs).label,
     ]);
   return JSON.stringify({
     agents: snapshot.agents.length,
@@ -535,7 +536,7 @@ function craftTreeProjectionSignature(
         definition.id,
         definition.uses,
         knownBy,
-        formatTickAge(snapshot.tick, definition.createdTick).label,
+        formatTickAge(snapshot.tick, definition.createdTick, snapshot.tickEpochs).label,
       ]),
       pairing.attempts.map((attempt) => [
         attempt.agentId,
@@ -543,7 +544,7 @@ function craftTreeProjectionSignature(
         attempt.actionName,
         attempt.purpose,
         attempt.startedTick,
-        formatTickAge(snapshot.tick, attempt.startedTick).label,
+        formatTickAge(snapshot.tick, attempt.startedTick, snapshot.tickEpochs).label,
       ]),
     ]),
     artifacts,
