@@ -67,14 +67,14 @@ app.innerHTML = `
       <span id="engine-status" class="engine-status"><b></b> CONNECTING</span>
       <button id="heat-button" class="pixel-button" type="button" aria-pressed="false" aria-controls="heat-key"><i class="hn hn-fire"></i> HEAT</button>
       <button id="craft-tree-button" class="pixel-button" type="button"><i class="hn hn-code-block"></i> CRAFT TREE</button>
+      <a class="pixel-button" href="/ranking"><i class="hn hn-trophy"></i> RANKING</a>
       <button id="about-button" class="pixel-button" type="button"><i class="hn hn-info-circle"></i> ABOUT</button>
-    </div>
-
-    <div id="heat-key" class="heat-key glass-panel" aria-label="Heat legend" hidden>
-      <span class="heat-key-title">TIME SPENT HERE</span>
-      <span class="heat-key-ramp"><small>LOW</small><i style="background: ${heatLegend.ramp}"></i><small>HIGH</small></span>
-      <span class="heat-key-title">MOSTLY DOING</span>
-      <span class="heat-key-activities">${heatLegend.activities.map(({ mode, color }) => `<span><b style="background: ${color}"></b>${mode.toUpperCase()}</span>`).join("")}</span>
+      <div id="heat-key" class="heat-key glass-panel" aria-label="Heat legend" hidden>
+        <span class="heat-key-title">TIME SPENT HERE</span>
+        <span class="heat-key-ramp"><small>LOW</small><i style="background: ${heatLegend.ramp}"></i><small>HIGH</small></span>
+        <span class="heat-key-title">MOSTLY DOING</span>
+        <span class="heat-key-activities">${heatLegend.activities.map(({ mode, color }) => `<span><b style="background: ${color}"></b>${mode.toUpperCase()}</span>`).join("")}</span>
+      </div>
     </div>
 
     <section class="event-panel glass-panel" aria-label="Events in the world">

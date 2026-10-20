@@ -168,7 +168,11 @@ a:focus-visible {
   z-index: 3;
   top: 22px;
   right: 22px;
+  /* Start past the 265px masthead and wrap instead of covering it. */
+  left: 305px;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: 12px;
 }
@@ -179,11 +183,12 @@ a:focus-visible {
   box-shadow: 2px 2px 0 var(--ink);
 }
 
+/* Anchored under the button bar, however many rows it wraps to. */
 .heat-key {
   position: absolute;
   z-index: 2;
-  top: 74px;
-  right: 22px;
+  top: calc(100% + 8px);
+  right: 0;
   display: grid;
   gap: 6px;
   width: min(292px, calc(100vw - 44px));
@@ -228,25 +233,13 @@ a:focus-visible {
 
 @media (max-width: 900px) {
   .heat-key {
-    top: 66px;
-    right: 14px;
     width: min(292px, calc(100vw - 28px));
   }
 }
 
 @media (max-width: 600px) {
-  .top-actions {
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    max-width: 212px;
-  }
-
   #heat-button {
     order: 1;
-  }
-
-  .heat-key {
-    top: 116px;
   }
 }
 
@@ -295,6 +288,10 @@ a:focus-visible {
 .pixel-button:hover {
   transform: translate(2px, 2px);
   box-shadow: 2px 2px 0 var(--ink);
+}
+
+a.pixel-button {
+  text-decoration: none;
 }
 
 .event-panel {
@@ -1960,6 +1957,7 @@ a:focus-visible {
 
   .top-actions {
     right: 14px;
+    left: 297px;
   }
 
   .craft-tree-hero {
@@ -2022,6 +2020,9 @@ a:focus-visible {
   }
 
   .top-actions {
+    /* Phones: the row moves under the masthead. */
+    top: 66px;
+    left: 14px;
     gap: 6px;
   }
 

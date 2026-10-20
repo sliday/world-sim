@@ -1,0 +1,679 @@
+/* Ranking page: reuses the tokens and type from style.css, mirrors the Craft Tree page. */
+
+/* A standalone page scrolls the document; style.css locks it for the world view. */
+body {
+  overflow: auto;
+}
+
+.ranking-page {
+  min-height: 100dvh;
+  color: var(--cream);
+  background-color: #0c1b1c;
+  background-image:
+    linear-gradient(rgba(119, 216, 207, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(119, 216, 207, 0.035) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+.ranking-page a.pixel-button,
+.ranking-nav .wordmark {
+  text-decoration: none;
+}
+
+.ranking-nav {
+  position: sticky;
+  z-index: 5;
+  top: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  min-height: 82px;
+  padding: 18px 28px;
+  border-bottom: 1px solid rgba(242, 237, 207, 0.18);
+  background: rgba(12, 27, 28, 0.94);
+  backdrop-filter: blur(14px) saturate(120%);
+}
+
+.ranking-nav > div {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.ranking-nav > div > span {
+  color: var(--aqua);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+
+.ranking-state {
+  display: grid;
+  min-height: calc(100dvh - 82px);
+  padding: 40px 24px;
+  place-content: center;
+  justify-items: center;
+  text-align: center;
+}
+
+.ranking-state > i {
+  margin-bottom: 18px;
+  color: var(--aqua);
+  font-size: 30px;
+}
+
+.ranking-state strong {
+  color: var(--acid);
+  font-family: var(--font-display);
+  font-size: 24px;
+}
+
+.ranking-state p {
+  max-width: 520px;
+  margin: 12px 0 22px;
+  color: rgba(242, 237, 207, 0.78);
+  font-family: system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.ranking-state.compact {
+  position: sticky;
+  z-index: 4;
+  top: 82px;
+  display: flex;
+  flex-wrap: wrap;
+  min-height: 0;
+  padding: 10px 28px;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid rgba(242, 237, 207, 0.2);
+  background: rgba(12, 27, 28, 0.96);
+  text-align: left;
+}
+
+.ranking-state.compact > i {
+  margin: 0;
+  font-size: 14px;
+}
+
+.ranking-state.compact strong,
+.ranking-state.compact p {
+  margin: 0;
+  font-size: 12px;
+}
+
+.ranking-state.compact .pixel-button {
+  padding: 7px 10px;
+  font-size: 10px;
+}
+
+.ranking-content {
+  max-width: 1460px;
+  margin: 0 auto;
+  padding: 52px 28px 80px;
+}
+
+.ranking-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.78fr);
+  gap: 64px;
+  align-items: end;
+  padding-bottom: 40px;
+  border-bottom: 1px solid rgba(242, 237, 207, 0.18);
+}
+
+.ranking-hero .eyebrow {
+  margin-bottom: 14px;
+  color: var(--aqua);
+}
+
+.ranking-hero h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(52px, 6.5vw, 92px);
+  letter-spacing: -0.045em;
+  line-height: 0.83;
+  text-wrap: balance;
+}
+
+.ranking-hero h1 em {
+  color: var(--acid);
+  font-style: normal;
+}
+
+.ranking-hero > div > p:last-child {
+  max-width: 680px;
+  margin: 26px 0 0;
+  color: rgba(242, 237, 207, 0.72);
+  font-family: system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.ranking-summary {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin: 0;
+  border: 1px solid rgba(242, 237, 207, 0.24);
+}
+
+.ranking-summary div {
+  min-height: 112px;
+  padding: 18px;
+  border-right: 1px solid rgba(242, 237, 207, 0.18);
+  border-bottom: 1px solid rgba(242, 237, 207, 0.18);
+}
+
+.ranking-summary div:nth-child(2n) {
+  border-right: 0;
+}
+
+.ranking-summary div:nth-last-child(-n + 2) {
+  border-bottom: 0;
+}
+
+.ranking-summary dt {
+  color: rgba(242, 237, 207, 0.74);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+}
+
+.ranking-summary dd {
+  margin: 10px 0 0;
+  color: var(--acid);
+  font-size: 30px;
+  line-height: 1;
+}
+
+.ranking-summary small {
+  display: block;
+  margin-top: 10px;
+  color: rgba(242, 237, 207, 0.58);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
+.ranking-verdict {
+  max-width: 980px;
+  margin: 0;
+  padding: 24px 0 30px;
+  color: rgba(242, 237, 207, 0.84);
+  font-family: system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+.ranking-verdict b {
+  margin-right: 8px;
+  padding: 3px 7px;
+  color: var(--ink);
+  background: var(--cream);
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+}
+
+.ranking-verdict b.signal {
+  background: var(--acid);
+}
+
+.ranking-section {
+  margin: 0 0 38px;
+  border: 1px solid rgba(242, 237, 207, 0.22);
+  background: rgba(5, 16, 17, 0.54);
+}
+
+.ranking-section > header {
+  display: flex;
+  flex-wrap: wrap;
+  min-height: 68px;
+  padding: 11px 18px;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px 18px;
+  border-bottom: 1px solid rgba(242, 237, 207, 0.18);
+}
+
+.ranking-section > header > div {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.ranking-section > header span {
+  color: var(--aqua);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+
+.ranking-section > header strong {
+  font-family: var(--font-display);
+  font-size: 16px;
+}
+
+.ranking-section > header small {
+  color: rgba(242, 237, 207, 0.64);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
+.ranking-quiet {
+  margin: 0;
+  padding: 14px 18px;
+  color: rgba(242, 237, 207, 0.62);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ranking-charts {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 1px;
+  background: rgba(242, 237, 207, 0.12);
+}
+
+.ranking-chart {
+  grid-column: span 2;
+  min-width: 0;
+  margin: 0;
+  padding: 14px 16px 12px;
+  background: #0b1a1b;
+}
+
+.ranking-chart.wide {
+  grid-column: span 3;
+}
+
+.ranking-chart figcaption {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin-bottom: 8px;
+}
+
+.ranking-chart figcaption strong {
+  font-family: var(--font-display);
+  font-size: 12px;
+}
+
+.ranking-chart figcaption span {
+  color: rgba(242, 237, 207, 0.55);
+  font-size: 10px;
+}
+
+.ranking-chart svg,
+.ranking-distribution svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.ranking-page svg .grid {
+  stroke: rgba(242, 237, 207, 0.1);
+}
+
+.ranking-page svg .axis,
+.ranking-page svg .reference-label {
+  fill: rgba(242, 237, 207, 0.55);
+  font-family: var(--font-data);
+  font-size: 10px;
+}
+
+.ranking-page svg .reference {
+  stroke: rgba(242, 237, 207, 0.4);
+  stroke-dasharray: 4 4;
+}
+
+.ranking-chart .series path {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.ranking-chart .series.measured path {
+  stroke: var(--acid);
+}
+
+.ranking-chart .series.measured rect,
+.ranking-legend .measured i {
+  fill: var(--acid);
+  background: var(--acid);
+}
+
+.ranking-chart .series.chance path {
+  stroke: var(--coral);
+  stroke-dasharray: 5 4;
+}
+
+.ranking-chart .series.chance rect,
+.ranking-legend .chance i {
+  fill: var(--coral);
+  background: var(--coral);
+}
+
+.ranking-chart .series.ladder path {
+  stroke: var(--aqua);
+}
+
+.ranking-chart .series.ladder rect,
+.ranking-legend .ladder i {
+  fill: var(--aqua);
+  background: var(--aqua);
+}
+
+.ranking-chart .series.lineage path {
+  stroke: var(--purple);
+}
+
+.ranking-chart .series.lineage rect,
+.ranking-legend .lineage i {
+  fill: var(--purple);
+  background: var(--purple);
+}
+
+.ranking-chart .series.links path {
+  stroke: var(--cream);
+}
+
+.ranking-chart .series.links rect,
+.ranking-legend .links i {
+  fill: var(--cream);
+  background: var(--cream);
+}
+
+.ranking-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 6px;
+  color: rgba(242, 237, 207, 0.7);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
+.ranking-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ranking-legend i {
+  width: 8px;
+  height: 8px;
+}
+
+.ranking-distribution {
+  padding: 16px 18px 10px;
+  border-bottom: 1px solid rgba(242, 237, 207, 0.12);
+}
+
+.ranking-distribution rect.ranked {
+  fill: var(--acid);
+}
+
+.ranking-distribution rect.floor {
+  fill: rgba(242, 237, 207, 0.22);
+}
+
+.ranking-empty {
+  padding: 16px 18px;
+  border-bottom: 1px solid rgba(242, 237, 207, 0.12);
+}
+
+.ranking-empty strong {
+  color: var(--coral);
+  font-family: var(--font-display);
+  font-size: 14px;
+}
+
+.ranking-empty p {
+  max-width: 760px;
+  margin: 8px 0 0;
+  color: rgba(242, 237, 207, 0.78);
+  font-family: system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.ranking-table-wrap {
+  overflow-x: auto;
+}
+
+.ranking-table {
+  width: 100%;
+  min-width: 980px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.ranking-table th {
+  padding: 10px 12px;
+  color: rgba(242, 237, 207, 0.6);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid rgba(242, 237, 207, 0.18);
+}
+
+.ranking-table th small {
+  display: block;
+  color: rgba(242, 237, 207, 0.4);
+  font-size: 9px;
+}
+
+.ranking-table td {
+  padding: 10px 12px;
+  vertical-align: middle;
+  border-bottom: 1px solid rgba(242, 237, 207, 0.08);
+}
+
+.ranking-table td small {
+  color: rgba(242, 237, 207, 0.5);
+  font-size: 10px;
+}
+
+.ranking-table td.rank {
+  color: var(--acid);
+  font-family: var(--font-display);
+  font-size: 16px;
+  white-space: nowrap;
+}
+
+.ranking-table tr.unranked td.rank,
+.ranking-table td.muted {
+  color: rgba(242, 237, 207, 0.45);
+}
+
+.ranking-table .bot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 170px;
+}
+
+.ranking-table .portrait {
+  display: block;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  border: 1px solid hsl(var(--bot-hue) 60% 62% / 0.6);
+  background: #102022;
+}
+
+.ranking-table .portrait svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.ranking-table .bot strong {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.ranking-table .prestige {
+  display: grid;
+  gap: 5px;
+  min-width: 110px;
+}
+
+.ranking-table .prestige strong {
+  font-size: 14px;
+}
+
+.ranking-table .prestige span {
+  display: block;
+  height: 4px;
+  background: rgba(242, 237, 207, 0.1);
+}
+
+.ranking-table .prestige i {
+  display: block;
+  height: 100%;
+  background: var(--acid);
+}
+
+.ranking-table tr.unranked .prestige i {
+  background: rgba(242, 237, 207, 0.3);
+}
+
+.ranking-table .chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.ranking-table .chip {
+  padding: 2px 6px;
+  border: 1px solid rgba(242, 237, 207, 0.22);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.ranking-table .chip.fork,
+.ranking-table .chip.learn {
+  border-color: rgba(219, 244, 92, 0.5);
+  color: var(--acid);
+}
+
+.ranking-table .chip.inspect {
+  border-color: rgba(119, 216, 207, 0.5);
+  color: var(--aqua);
+}
+
+#ranking-more {
+  margin: 16px 18px 18px;
+}
+
+.ranking-notes {
+  padding-top: 8px;
+}
+
+.ranking-notes h2 {
+  margin: 0 0 18px;
+  font-family: var(--font-display);
+  font-size: 22px;
+}
+
+.ranking-notes > div {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 1px;
+  border: 1px solid rgba(242, 237, 207, 0.18);
+  background: rgba(242, 237, 207, 0.12);
+}
+
+.ranking-notes section {
+  padding: 18px;
+  background: #0c1b1c;
+}
+
+.ranking-notes h3 {
+  margin: 0 0 8px;
+  color: var(--aqua);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+}
+
+.ranking-notes p {
+  margin: 0;
+  color: rgba(242, 237, 207, 0.76);
+  font-family: system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+@media (max-width: 900px) {
+  .ranking-hero {
+    grid-template-columns: 1fr;
+    gap: 32px;
+  }
+
+  .ranking-charts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ranking-chart,
+  .ranking-chart.wide {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 600px) {
+  .ranking-nav {
+    min-height: 64px;
+    padding: 12px 14px;
+  }
+
+  .ranking-nav .wordmark {
+    font-size: 18px;
+  }
+
+  .ranking-nav > div {
+    gap: 10px;
+  }
+
+  .ranking-nav > div > span {
+    display: none;
+  }
+
+  .ranking-nav .pixel-button {
+    min-height: 44px;
+    padding: 9px 8px;
+    font-size: 10px;
+  }
+
+  .ranking-state.compact {
+    top: 64px;
+    padding: 10px 14px;
+  }
+
+  .ranking-content {
+    padding: 32px 14px 60px;
+  }
+
+  .ranking-summary div {
+    min-height: 0;
+    padding: 14px;
+  }
+
+  .ranking-summary dd {
+    font-size: 24px;
+  }
+
+  .ranking-notes > div {
+    grid-template-columns: 1fr;
+  }
+}
