@@ -27,9 +27,15 @@ const MAP_WIDTH = WORLD_WIDTH * CELL;
 const MAP_HEIGHT = WORLD_HEIGHT * CELL;
 // Wrapped tiles around the heat field keep smoothing and blur seamless across the torus.
 const HEAT_PADDING = 3;
-const HEAT_MAX_ALPHA = 0.36;
-const HEAT_FLOOR_ALPHA = 0.03;
 const HEAT_BLUR = CELL * 0.35;
+// The heat is soft, so it blurs at half map resolution; smoothing hides the upscale.
+const HEAT_SOFT_CELL = CELL / 2;
+// The faint view keeps terrain primary; the strong view mutes terrain so time spent reads first.
+const heatStyles = {
+  faint: { floorAlpha: 0.03, maxAlpha: 0.36, terrainMute: 0 },
+  strong: { floorAlpha: 0.08, maxAlpha: 0.68, terrainMute: 0.5 },
+} as const;
+export type HeatView = keyof typeof heatStyles;
 
 const palette: Record<TerrainKind, string> = {
   "deep-water": "#112f3f",
@@ -112,6 +118,7 @@ export function createWorldSketch(
 ): {
   update: (snapshot: PublicWorldSnapshot) => void;
   selectAgent: (agentId: string | null) => void;
+  setHeatView: (view: HeatView) => void;
   remove: () => void;
 } {
   let world = initial;
@@ -120,6 +127,7 @@ export function createWorldSketch(
   let terrainLayer: p5.Graphics | undefined;
   let mapLayer: p5.Graphics | undefined;
   let paintedHeat: string | undefined;
+  let heatView: HeatView = "faint";
   let worldCanvas: HTMLCanvasElement | undefined;
   let selectedAgentId: string | null = null;
   const visualAgentPositions = new Map<string, VisualAgentPosition>();
@@ -161,7 +169,7 @@ export function createWorldSketch(
       terrainLayer = buildTerrainLayer(p, world.terrain, world.seed);
       mapLayer = p.createGraphics(MAP_WIDTH, MAP_HEIGHT);
       mapLayer.pixelDensity(1);
-      paintMapLayer(mapLayer, terrainLayer, world.heat);
+      paintMapLayer(mapLayer, terrainLayer, world.heat, heatView);
       paintedHeat = world.heat.tiles;
     };
 
@@ -213,7 +221,7 @@ export function createWorldSketch(
       }
       // Heat changes only when a log-scaled tile level moves, so most snapshots skip the repaint.
       if (mapLayer && terrainLayer && snapshot.heat.tiles !== paintedHeat) {
-        paintMapLayer(mapLayer, terrainLayer, snapshot.heat);
+        paintMapLayer(mapLayer, terrainLayer, snapshot.heat, heatView);
         paintedHeat = snapshot.heat.tiles;
       }
       if (snapshot.tick !== world.tick) {
@@ -227,6 +235,11 @@ export function createWorldSketch(
     },
     selectAgent(agentId) {
       selectedAgentId = agentId;
+    },
+    setHeatView(view) {
+      if (view === heatView) return;
+      heatView = view;
+      if (mapLayer && terrainLayer) paintMapLayer(mapLayer, terrainLayer, world.heat, heatView);
     },
     remove() {
       terrainLayer?.remove();
@@ -373,6 +386,17 @@ const heatStops = [
   [1, [255, 209, 102]],
 ] as const;
 
+/** Colors for the strong-view legend: the time-spent ramp and the per-activity tints. */
+export const heatLegend = {
+  ramp: `linear-gradient(90deg, ${heatStops
+    .map(([stop, [red, green, blue]]) => `rgb(${red} ${green} ${blue}) ${stop * 100}%`)
+    .join(", ")})`,
+  activities: OCCUPANCY_MODES.filter((mode) => mode !== "surveying").map((mode) => ({
+    mode,
+    color: modeColor[mode],
+  })),
+};
+
 function heatRamp(level: number): [number, number, number] {
   for (let index = 1; index < heatStops.length; index += 1) {
     const [end, to] = heatStops[index]!;
@@ -392,7 +416,8 @@ function hexRgb(hex: string): [number, number, number] {
 }
 
 /** One pixel per tile, tinted by the dominant activity, alpha from log-scaled agent-ticks. */
-function buildHeatField(heat: OccupancyHeat): HTMLCanvasElement {
+function buildHeatField(heat: OccupancyHeat, view: HeatView): HTMLCanvasElement {
+  const { floorAlpha, maxAlpha } = heatStyles[view];
   const { intensity, dominantMode } = decodeOccupancyHeat(heat);
   const width = WORLD_WIDTH + HEAT_PADDING * 2;
   const height = WORLD_HEIGHT + HEAT_PADDING * 2;
@@ -421,7 +446,7 @@ function buildHeatField(heat: OccupancyHeat): HTMLCanvasElement {
       image.data[offset + 1] = green;
       image.data[offset + 2] = blue;
       image.data[offset + 3] = Math.round(
-        255 * (HEAT_FLOOR_ALPHA + (HEAT_MAX_ALPHA - HEAT_FLOOR_ALPHA) * heat ** 1.3),
+        255 * (floorAlpha + (maxAlpha - floorAlpha) * heat ** 1.3),
       );
     }
   }
@@ -429,23 +454,48 @@ function buildHeatField(heat: OccupancyHeat): HTMLCanvasElement {
   return field;
 }
 
-/** Composites terrain and the soft heat field once per heat change, so frames stay one blit. */
-function paintMapLayer(layer: p5.Graphics, terrain: p5.Graphics, heat: OccupancyHeat): void {
+/** Composites terrain and the soft heat field once per heat or view change; frames stay one blit. */
+function paintMapLayer(
+  layer: p5.Graphics,
+  terrain: p5.Graphics,
+  heat: OccupancyHeat,
+  view: HeatView,
+): void {
   layer.clear();
   layer.image(terrain, 0, 0);
-  const field = buildHeatField(heat);
+  const field = buildHeatField(heat, view);
   const context = layer.drawingContext as CanvasRenderingContext2D;
   context.save();
-  context.imageSmoothingEnabled = true;
-  context.imageSmoothingQuality = "high";
-  context.filter = `blur(${HEAT_BLUR}px)`;
-  context.drawImage(
-    field,
-    -HEAT_PADDING * CELL,
-    -HEAT_PADDING * CELL,
-    field.width * CELL,
-    field.height * CELL,
-  );
+  const { terrainMute } = heatStyles[view];
+  if (terrainMute) {
+    context.fillStyle = `rgba(16, 30, 32, ${terrainMute})`;
+    context.fillRect(0, 0, MAP_WIDTH, MAP_HEIGHT);
+  }
+  // Canvas blur clips at the target's edges, so blur the padded field in its own buffer and copy
+  // only the wrapped interior; adjacent map copies then meet without a thinner seam.
+  const soft = document.createElement("canvas");
+  soft.width = field.width * HEAT_SOFT_CELL;
+  soft.height = field.height * HEAT_SOFT_CELL;
+  const softContext = soft.getContext("2d");
+  if (softContext) {
+    softContext.imageSmoothingEnabled = true;
+    softContext.imageSmoothingQuality = "high";
+    softContext.filter = `blur(${(HEAT_BLUR * HEAT_SOFT_CELL) / CELL}px)`;
+    softContext.drawImage(field, 0, 0, soft.width, soft.height);
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    context.drawImage(
+      soft,
+      HEAT_PADDING * HEAT_SOFT_CELL,
+      HEAT_PADDING * HEAT_SOFT_CELL,
+      WORLD_WIDTH * HEAT_SOFT_CELL,
+      WORLD_HEIGHT * HEAT_SOFT_CELL,
+      0,
+      0,
+      MAP_WIDTH,
+      MAP_HEIGHT,
+    );
+  }
   context.restore();
 }
 

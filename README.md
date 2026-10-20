@@ -96,7 +96,7 @@ The tests cover deterministic replay, persistent artifact inheritance, emergent 
 
 The map borrows the method—not generated assets—from Stas Kulesh's `blouns/gmi.sh`: layered radial color fields, displaced-looking organic regions, paper grain, and many translucent strata. The rendered planet is procedural and toroidally seamless.
 
-A faint heatmap under the bots shows where they spend their time. Each tick, the engine adds one agent-tick to the tile and activity of every bot and keeps these all-time counts without decay. Counting starts when a world first loads this version; the engine never rebuilds history from the short trails. Each snapshot carries one byte per tile, about 9 KB of base64, holding a log-scaled level between the median and the 99th-percentile tile plus the tile's dominant activity. The renderer blurs that field into a warm glow and tints tiles with the color of any activity that outweighs surveying there.
+A faint heatmap under the bots shows where they spend their time. Each tick, the engine adds one agent-tick to the tile and activity of every bot and keeps these all-time counts without decay. Counting starts when a world first loads this version; the engine never rebuilds history from the short trails. Each snapshot carries one byte per tile, about 9 KB of base64, holding a log-scaled level between the median and the 99th-percentile tile plus the tile's dominant activity. The renderer blurs that field into a warm glow and tints tiles with the color of any activity that outweighs surveying there. The HEAT button switches to a strong view that mutes the terrain, raises the glow, and shows a legend; your browser remembers the choice.
 
 ## Research and credits
 
