@@ -35,6 +35,7 @@ import {
   WORLD_DIARY_INTERVAL_TICKS,
 } from "../src/sim/world-diary";
 import { runHeldOutAssay } from "../src/sim/held-out-assay";
+import { ARTIFACT_DECAY_WINDOW_TICKS, SKILL_FORGETTING_WINDOW_TICKS } from "../src/sim/pruning";
 import { CLEF_MODEL, ClefDecisionError, requestClefDirective } from "../src/sim/clef-decisions";
 import type {
   AgentActionProposal,
@@ -691,6 +692,14 @@ export class WorldRoom extends DurableObject<Env> {
       nullclawPolicy: this.nullclawPolicy() !== undefined,
       actionSandbox: "nullclaw-wasm-dsl",
       actionLibrarySize: world.actionLibrary.length,
+      fossils: {
+        extinctSkills: world.fossils.extinctSkills,
+        removedArtifacts: world.fossils.removedArtifacts,
+        retainedSkillFossils: world.fossils.skills.length,
+        retainedArtifactFossils: world.fossils.artifacts.length,
+        artifactDecayWindowTicks: ARTIFACT_DECAY_WINDOW_TICKS,
+        skillForgettingWindowTicks: SKILL_FORGETTING_WINDOW_TICKS,
+      },
       activeCraftingCommitments: world.agents.filter((agent) => agent.craftingTarget).length,
       completedCrafts: world.agents.reduce((total, agent) => total + agent.crafts, 0),
       meanCuriosity:

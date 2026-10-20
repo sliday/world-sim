@@ -128,6 +128,7 @@ export interface AgentActionDefinition extends AgentActionProposal {
   createdTick: number;
   uses: number;
   recipe?: [MaterialKind, MaterialKind];
+  forgottenBy?: string[];
 }
 
 export interface CraftingTarget {
@@ -193,6 +194,7 @@ export interface Agent {
   documents: AgentDocuments;
   script: AgentScript;
   knownActionIds: string[];
+  skillLastUsedTick: Record<string, number>;
   lastSpeech?: string;
   heardMessages: HeardMessage[];
 }
@@ -241,6 +243,7 @@ export interface Artifact {
   };
   fluxTrackingStartedTick?: number;
   builtAt: number;
+  lastTouchedTick?: number;
   uses: number;
   validated: boolean;
 }
@@ -255,10 +258,60 @@ export interface Station {
 export interface WorldEvent {
   id: string;
   tick: number;
-  kind: "discovery" | "build" | "fork" | "repair" | "failure" | "decision" | "craft" | "creative";
+  kind:
+    | "discovery"
+    | "build"
+    | "fork"
+    | "repair"
+    | "failure"
+    | "decision"
+    | "craft"
+    | "creative"
+    | "prune";
   text: string;
   x: number;
   y: number;
+}
+
+export interface SkillFossil {
+  id: string;
+  name: string;
+  icon: string;
+  authorId: string;
+  recipe?: [MaterialKind, MaterialKind];
+  program: ActionPrimitive[];
+  createdTick: number;
+  extinctTick: number;
+  uses: number;
+  knowerIds: string[];
+}
+
+export interface ArtifactFossil {
+  id: string;
+  name: string;
+  material: MaterialKind;
+  creatorId: string;
+  authors: string[];
+  contributors: string[];
+  adopters: string[];
+  serviceInspectedBy: string[];
+  parentId?: string;
+  generation: number;
+  controllerAction: ControllerAction;
+  process?: Station["kind"];
+  validated: boolean;
+  uses: number;
+  builtAt: number;
+  lastTouchedTick: number;
+  removedTick: number;
+  reason: "decay" | "capacity";
+}
+
+export interface FossilRecord {
+  extinctSkills: number;
+  removedArtifacts: number;
+  skills: SkillFossil[];
+  artifacts: ArtifactFossil[];
 }
 
 export interface WorldDiaryEntry {
@@ -310,6 +363,7 @@ export interface WorldState {
   stations: Station[];
   events: WorldEvent[];
   actionLibrary: AgentActionDefinition[];
+  fossils: FossilRecord;
   messages: AgentMessage[];
   metrics: WorldMetrics;
   llm: {
