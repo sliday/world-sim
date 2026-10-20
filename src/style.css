@@ -168,7 +168,11 @@ a:focus-visible {
   z-index: 3;
   top: 22px;
   right: 22px;
+  /* Start past the 265px masthead and wrap instead of covering it. */
+  left: 305px;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: 12px;
 }
@@ -222,15 +226,6 @@ a:focus-visible {
 
 a.pixel-button {
   text-decoration: none;
-}
-
-@media (max-width: 600px) {
-  /* Stack below the row so phones keep the existing header width. */
-  .top-actions .ranking-link {
-    position: absolute;
-    top: calc(100% + 8px);
-    right: 0;
-  }
 }
 
 .event-panel {
@@ -1896,6 +1891,7 @@ a.pixel-button {
 
   .top-actions {
     right: 14px;
+    left: 297px;
   }
 
   .craft-tree-hero {
@@ -1958,6 +1954,9 @@ a.pixel-button {
   }
 
   .top-actions {
+    /* Phones: the row moves under the masthead. */
+    top: 66px;
+    left: 14px;
     gap: 6px;
   }
 

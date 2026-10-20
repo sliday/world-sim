@@ -4,7 +4,6 @@ import {
   HIERARCHY_MAX_SNAPSHOTS,
   HIERARCHY_SNAPSHOT_INTERVAL_TICKS,
   type HierarchyApiResponse,
-  type HierarchyFossils,
   type HierarchyHistoryPoint,
   type HierarchyReport,
 } from "../src/sim/hierarchy";
@@ -38,14 +37,15 @@ export class HierarchyHistoryStore {
     `);
   }
 
-  report(world: WorldState, fossils?: HierarchyFossils): HierarchyReport {
+  /** `computeHierarchy` reads `world.fossils`, so pruned work keeps its links. */
+  report(world: WorldState): HierarchyReport {
     if (this.cached?.tick !== world.tick)
-      this.cached = { tick: world.tick, report: computeHierarchy(world, { fossils }) };
+      this.cached = { tick: world.tick, report: computeHierarchy(world) };
     return this.cached.report;
   }
 
   /** Record a baseline once, then one snapshot per interval of world ticks. */
-  maybeRecord(world: WorldState, now = Date.now(), fossils?: HierarchyFossils): void {
+  maybeRecord(world: WorldState, now = Date.now()): void {
     this.latestTick ??=
       this.sql
         .exec<{ [key: string]: SqlStorageValue; tick: number | null }>(
@@ -59,7 +59,7 @@ export class HierarchyHistoryStore {
           ? "interval"
           : undefined;
     if (!kind) return;
-    const point = hierarchyHistoryPoint(this.report(world, fossils), kind, now);
+    const point = hierarchyHistoryPoint(this.report(world), kind, now);
     this.sql.exec(
       `INSERT OR REPLACE INTO hierarchy_snapshots (tick, kind, created_at, point_json)
        VALUES (?, ?, ?, ?)`,
@@ -111,10 +111,10 @@ export class HierarchyHistoryStore {
       });
   }
 
-  response(world: WorldState, fossils?: HierarchyFossils): HierarchyApiResponse {
+  response(world: WorldState): HierarchyApiResponse {
     const points = this.read();
     return {
-      current: this.report(world, fossils),
+      current: this.report(world),
       history: {
         intervalTicks: HIERARCHY_SNAPSHOT_INTERVAL_TICKS,
         maxPoints: HIERARCHY_MAX_SNAPSHOTS,

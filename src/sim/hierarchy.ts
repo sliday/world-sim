@@ -30,7 +30,7 @@ export const HIERARCHY_MAX_SNAPSHOTS = 720;
 const AGENT_ID = /^A\d{3}$/u;
 const TIE_EPSILON = 1e-9;
 
-/** Removed artifacts kept by an archive; any missing list simply adds no acts. */
+/** Removed artifacts from `world.fossils`; any missing list simply adds no acts. */
 export interface HierarchyFossilArtifact {
   id: string;
   creatorId?: string;
@@ -42,11 +42,11 @@ export interface HierarchyFossilArtifact {
   contributors?: string[];
 }
 
-/** Extinct skills kept by an archive; `learnerIds` are agents who had learned it. */
+/** Extinct skills from `world.fossils`; `knowerIds` are agents who knew and forgot it. */
 export interface HierarchyFossilSkill {
   id: string;
   authorId?: string;
-  learnerIds?: string[];
+  knowerIds?: string[];
 }
 
 export interface HierarchyFossils {
@@ -187,11 +187,12 @@ function creatorOf(record: LineageRecord): string | undefined {
 
 /**
  * Extract every measurable deference act from live artifacts, live skills,
- * and optional fossils. Live records win over fossils with the same id.
+ * and fossils of pruned ones, so pruning never erases a creator's history.
+ * Live artifacts win over fossils with the same id.
  */
 export function collectDeferenceActs(
   world: WorldState,
-  fossils: HierarchyFossils = {},
+  fossils: HierarchyFossils = world.fossils ?? {},
 ): DeferenceAct[] {
   const agentIds = new Set(world.agents.map((agent) => agent.id));
   const valid = (id: string | undefined): id is string =>
@@ -238,21 +239,15 @@ export function collectDeferenceActs(
       learners.set(actionId, known);
     }
   }
-  const skills = new Map<string, { authorId?: string; learnerIds: Set<string> }>();
+  // Each record credits its own author, so a rediscovered skill id never
+  // moves an extinct author's learners to the rediscoverer.
   for (const fossil of fossils.skills ?? []) {
     if (fossil?.id)
-      skills.set(fossil.id, {
-        authorId: fossil.authorId,
-        learnerIds: new Set(ids(fossil.learnerIds)),
-      });
+      for (const knower of ids(fossil.knowerIds)) add("learn", fossil.id, knower, fossil.authorId);
   }
   for (const action of world.actionLibrary) {
-    const learnerIds = skills.get(action.id)?.learnerIds ?? new Set<string>();
-    for (const id of learners.get(action.id) ?? []) learnerIds.add(id);
-    skills.set(action.id, { authorId: action.authorId, learnerIds });
-  }
-  for (const [skillId, skill] of skills) {
-    for (const learner of skill.learnerIds) add("learn", skillId, learner, skill.authorId);
+    for (const learner of [...(learners.get(action.id) ?? []), ...ids(action.forgottenBy)])
+      add("learn", action.id, learner, action.authorId);
   }
 
   return [...acts.values()].sort(
@@ -479,7 +474,7 @@ export function computeHierarchy(
   world: WorldState,
   options: { fossils?: HierarchyFossils; nullSamples?: number } = {},
 ): HierarchyReport {
-  const fossils = options.fossils ?? {};
+  const fossils = options.fossils ?? world.fossils ?? {};
   const nodeIds = world.agents.map((agent) => agent.id);
   const acts = collectDeferenceActs(world, fossils);
   const edges = aggregateEdges(acts);

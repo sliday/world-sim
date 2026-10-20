@@ -17,6 +17,7 @@ import {
   type HierarchyReport,
   type RankedAgent,
 } from "./sim/hierarchy";
+import { MAX_ARTIFACT_FOSSILS, MAX_SKILL_FOSSILS } from "./sim/pruning";
 import type { WorldState } from "./sim/types";
 
 type PageMode = "loading" | "authoritative" | "stale" | "fallback";
@@ -80,7 +81,7 @@ root.innerHTML = `
           <section><h3>NOT ENOUGH DATA</h3><p>Below ${HIERARCHY_MIN_EDGES} links the page shows no ranking, and below ${HIERARCHY_MIN_TRIADS} fully resolved trios it shows no transitivity. A blank means the world has not produced the evidence yet; it never means zero.</p></section>
           <section><h3>SPEECH IS NOT RANKED</h3><p>Bots address the nearest bot, recipients cannot refuse a message, and nothing in the world records whether a listener acted on it. Heard-by counts stay visible for context and never feed prestige.</p></section>
           <section><h3>BOTS NEVER SEE THIS</h3><p>Rank stays out of every bot’s observation, memory, and model prompt. The measurement only reads the world, so it cannot create the hierarchy it measures.</p></section>
-          <section><h3>WHAT THE WORLD FORGETS</h3><p>The ranking reads artifacts and skills that still exist. When the world retires one, its links leave the current ranking; the snapshots over time keep what was measured then. History starts when tracking was deployed. The first snapshot is a labeled baseline of that moment, which already includes links built before tracking began.</p></section>
+          <section><h3>WHAT THE WORLD FORGETS</h3><p>The world erodes dead artifacts nobody touches, bots forget skills they stop using, and a skill nobody knows goes extinct. Their links still count: the ranking reads the fossil archive, which keeps the newest ${MAX_ARTIFACT_FOSSILS} eroded artifacts with their users, inspectors, repairers, and forks, and the newest ${MAX_SKILL_FOSSILS} extinct skills with every bot that once knew them. A bot that learned a living skill and later forgot it still counts as a learner. Only fossils pushed out of the archive drop out. History starts when tracking was deployed. The first snapshot is a labeled baseline of that moment, which already includes links built before tracking began.</p></section>
         </div>
       </section>
     </article>
@@ -489,9 +490,15 @@ function renderTable(report: HierarchyReport): void {
   const { metrics } = report;
   const ranked = report.agents.filter((agent) => agent.rank !== undefined).length;
   const insufficient = metrics.insufficient.concentration !== undefined;
-  tableMeta.textContent = insufficient
-    ? "NO RANKING YET · INSUFFICIENT DATA"
-    : `${ranked} RANKED · ${report.agents.length - ranked} AT THE FLOOR (${metrics.prestigeFloor.toFixed(2)})`;
+  const fossils =
+    metrics.fossilArtifacts || metrics.fossilSkills
+      ? ` · COUNTS ${metrics.fossilArtifacts} ERODED ARTIFACTS, ${metrics.fossilSkills} EXTINCT SKILLS`
+      : "";
+  tableMeta.textContent =
+    (insufficient
+      ? "NO RANKING YET · INSUFFICIENT DATA"
+      : `${ranked} RANKED · ${report.agents.length - ranked} AT THE FLOOR (${metrics.prestigeFloor.toFixed(2)})`) +
+    fossils;
   distribution.innerHTML = distributionSvg(report);
   const evidence = report.agents.filter((agent) => agent.received.weight > 0);
   empty.hidden = !insufficient;

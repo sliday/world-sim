@@ -13,7 +13,13 @@ import {
   triadTransitivity,
   type DeferenceEdge,
 } from "./hierarchy";
-import type { Artifact, WorldState } from "./types";
+import {
+  ARTIFACT_DECAY_WINDOW_TICKS,
+  ARTIFACT_SERVICE_CUTOFF,
+  pruneWorld,
+  SKILL_FORGETTING_WINDOW_TICKS,
+} from "./pruning";
+import type { AgentActionDefinition, Artifact, WorldState } from "./types";
 
 function artifact(id: string, creatorId: string, fields: Partial<Artifact> = {}): Artifact {
   return {
@@ -207,7 +213,7 @@ describe("measured hierarchy", () => {
         { id: "pruned", creatorId: "A003", adopters: ["A004", "A005"], contributors: ["A004"] },
         { id: "pruned-child", creatorId: "A006", parentId: "pruned", authors: ["A003", "A006"] },
       ],
-      skills: [{ id: "a-extinct", authorId: "A007", learnerIds: ["A008", "A007", "A404"] }],
+      skills: [{ id: "a-extinct", authorId: "A007", knowerIds: ["A008", "A007", "A404"] }],
     });
     expect(withoutFossils).toHaveLength(1);
     expect(
@@ -299,6 +305,64 @@ describe("measured hierarchy", () => {
         { relation: "fork", sourceId: "y", fromId: "A002", toId: "A001", weight: 3 },
       ]),
     ).toEqual([{ fromId: "A002", toId: "A001", weight: 4 }]);
+  });
+
+  it("keeps a creator's incoming deference after pruning erodes its artifact or skill", () => {
+    const world = emptyWorld();
+    const dead = { health: ARTIFACT_SERVICE_CUTOFF / 2, lastTouchedTick: 0 };
+    world.artifacts = [
+      artifact("eroding", "A001", {
+        ...dead,
+        adopters: ["A002", "A003"],
+        serviceInspectedBy: ["A002"],
+        contributors: ["A001", "A004"],
+      }),
+      artifact("eroding-child", "A005", {
+        ...dead,
+        parentId: "eroding",
+        generation: 2,
+        authors: ["A001", "A005"],
+        contributors: ["A005"],
+      }),
+    ];
+    const skill = (id: string): AgentActionDefinition => ({
+      id,
+      name: id,
+      icon: "✶",
+      algorithm: "x",
+      program: ["scan-local"],
+      authorId: "A010",
+      createdTick: 0,
+      uses: 1,
+      recipe: ["water", "mineral"],
+    });
+    world.actionLibrary.push(skill("a-extinct"), skill("a-fading"));
+    const learn = (agentId: string, actionId: string, lastUsedTick: number) => {
+      const agent = world.agents.find((candidate) => candidate.id === agentId)!;
+      agent.knownActionIds.push(actionId);
+      agent.skillLastUsedTick[actionId] = lastUsedTick;
+    };
+    world.tick = Math.max(ARTIFACT_DECAY_WINDOW_TICKS, SKILL_FORGETTING_WINDOW_TICKS) + 600;
+    learn("A011", "a-extinct", 0);
+    learn("A012", "a-fading", 0);
+    learn("A013", "a-fading", world.tick);
+
+    const before = computeHierarchy(world);
+    pruneWorld(world);
+    expect(world.artifacts).toHaveLength(0);
+    expect(world.actionLibrary.map((action) => action.id)).not.toContain("a-extinct");
+    expect(world.actionLibrary.find((action) => action.id === "a-fading")?.forgottenBy).toEqual([
+      "A012",
+    ]);
+    const after = computeHierarchy(world);
+
+    const received = (report: typeof before, id: string) =>
+      report.agents.find((agent) => agent.id === id)!.received;
+    expect(received(before, "A001")).toMatchObject({ adopt: 2, inspect: 1, maintain: 1, fork: 1 });
+    expect(received(after, "A001")).toEqual(received(before, "A001"));
+    expect(received(before, "A010")).toMatchObject({ learn: 3, deferrers: 3 });
+    expect(received(after, "A010")).toEqual(received(before, "A010"));
+    expect(after.metrics).toMatchObject({ fossilArtifacts: 2, fossilSkills: 1 });
   });
 
   it("measures a live engine world without mutating it or reaching agent observations", () => {
