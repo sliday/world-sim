@@ -95,7 +95,10 @@ export function mechanismsForCondition(condition: InteractionCondition): Interac
   };
 }
 export const ARTIFACT_CONTACT_RADIUS = 3;
-export const MODEL_MACROTURN_INTERVAL_TICKS = 60;
+// One-second ticks keep the 10-minute macroturn, so holds and model spend keep their wall-clock length.
+export const MODEL_MACROTURN_INTERVAL_TICKS = 600;
+// Every 10 ticks an agent may reassess, but only once its hold ends or a wake condition fires.
+export const DECISION_CHECK_INTERVAL_TICKS = 10;
 export const CREATIVE_SESSION_COOLDOWN_TICKS = 600;
 export const CREATIVE_CURIOSITY_THRESHOLD = 0.68;
 const CURIOSITY_PER_TICK = 1 / 3_600;
@@ -501,7 +504,7 @@ export function nextScheduledDecisionTick(
 export function decisionAgentsDue(
   state: WorldState,
   candidateTick: number,
-  interval = MODEL_MACROTURN_INTERVAL_TICKS,
+  interval = DECISION_CHECK_INTERVAL_TICKS,
 ): Agent[] {
   return state.agents
     .filter(
@@ -512,30 +515,29 @@ export function decisionAgentsDue(
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 
-// A wake-up only pulls a held decision back to the agent's next phase tick after the current tick.
+// A wake-up only pulls a held decision back to the agent's next check tick after the current tick.
 export function wakeHoldingAgent(
   state: WorldState,
   agent: Agent,
   interval = MODEL_MACROTURN_INTERVAL_TICKS,
 ): boolean {
-  const wakeTick = nextScheduledDecisionTick(state.tick, agent.decisionPhase, interval);
+  const wakeTick = nextScheduledDecisionTick(
+    state.tick,
+    agent.decisionPhase,
+    DECISION_CHECK_INTERVAL_TICKS,
+  );
   if (agent.nextDecisionTick <= wakeTick) return false;
-  state.llm.holdSkipsScheduled -= (agent.nextDecisionTick - wakeTick) / interval;
+  state.llm.holdSkipsScheduled -= Math.floor((agent.nextDecisionTick - wakeTick) / interval);
   state.llm.holdWakeUps += 1;
   agent.nextDecisionTick = wakeTick;
   return true;
 }
 
 export function decisionHoldStats(state: WorldState, interval = MODEL_MACROTURN_INTERVAL_TICKS) {
+  // Skipped macroturn slots still ahead of the current tick in each agent's hold.
   const pendingHoldSkips = state.agents.reduce(
     (total, agent) =>
-      total +
-      Math.max(
-        0,
-        (agent.nextDecisionTick -
-          nextScheduledDecisionTick(state.tick, agent.decisionPhase, interval)) /
-          interval,
-      ),
+      total + Math.max(0, Math.floor((agent.nextDecisionTick - state.tick - 1) / interval)),
     0,
   );
   return {
@@ -625,7 +627,11 @@ export function deliverSpeech(
   const text = normalizeSpeech(rawSpeech);
   sender.lastSpeech = text;
   // A holding recipient hears queued speech at its next actual decision, including an early wake-up.
-  const deliverAtTick = nextScheduledDecisionTick(tick, recipient.decisionPhase);
+  const deliverAtTick = nextScheduledDecisionTick(
+    tick,
+    recipient.decisionPhase,
+    DECISION_CHECK_INTERVAL_TICKS,
+  );
   state.messages.unshift({
     id: `M${tick}-${fromId}-${recipient.id}-${state.messages.length}`,
     tick,
