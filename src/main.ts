@@ -800,6 +800,17 @@ function renderChrome(snapshot: PublicWorldSnapshot): void {
   engineStatus.innerHTML = `<b></b> ${assisted ? "OPENROUTER/FREE" : "DETERMINISTIC SEED"} · NULLCLAW SANDBOX`;
 }
 
+// About and the Craft Tree cover the whole viewport once their 220 ms fade ends, so the world stops
+// drawing underneath them and resumes the moment both are closed.
+let pauseWorldTimer: number | undefined;
+
+function syncWorldDrawing(): void {
+  window.clearTimeout(pauseWorldTimer);
+  if (aboutPage.classList.contains("visible") || craftTreePage.classList.contains("visible"))
+    pauseWorldTimer = window.setTimeout(() => renderer.setPaused(true), 240);
+  else renderer.setPaused(false);
+}
+
 function showAbout(show: boolean, updateHistory = true): void {
   if (show) {
     selectAgent(null);
@@ -819,6 +830,7 @@ function showAbout(show: boolean, updateHistory = true): void {
       worldShell.removeAttribute("aria-hidden");
     }
   }
+  syncWorldDrawing();
   if (updateHistory) history.pushState({ about: show }, "", show ? "/about" : "/");
 }
 
@@ -857,6 +869,7 @@ function showCraftTree(show: boolean, updateHistory = true): void {
     worldShell.removeAttribute("aria-hidden");
     if (wasVisible) window.requestAnimationFrame(() => craftTreeReturnFocus.focus());
   }
+  syncWorldDrawing();
   if (updateHistory) history.pushState({ craftTree: show }, "", show ? "/craft-tree" : "/");
 }
 

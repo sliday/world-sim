@@ -52,7 +52,8 @@ export interface Vec2 {
 }
 
 export interface Tile {
-  terrain: TerrainKind;
+  // Fixed when the terrain is generated; the engine indexes tiles by kind.
+  readonly terrain: TerrainKind;
   richness: number;
   moisture: number;
   contamination: number;

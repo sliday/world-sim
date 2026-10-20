@@ -1,4 +1,5 @@
 import { advanceWorld, createInitialWorld, publicSnapshot } from "./engine";
+import { decodeSnapshotFrame, type SnapshotFrame } from "./snapshot-stream";
 import type { PublicWorldSnapshot, WorldState } from "./types";
 
 export type WorldClientStatus = "loading" | "authoritative" | "stale" | "fallback";
@@ -6,6 +7,8 @@ export type WorldClientStatus = "loading" | "authoritative" | "stale" | "fallbac
 // The browser fallback advances two ticks every 160 ms, so its ages use an 80 ms tick.
 const FALLBACK_STEP_MS = 160;
 const FALLBACK_TICKS_PER_STEP = 2;
+// The socket delivers every tick; polling the full snapshot only covers a closed or silent socket.
+const SOCKET_SILENCE_MS = 25_000;
 
 type SnapshotListener = (snapshot: PublicWorldSnapshot) => void;
 type StatusListener = (status: WorldClientStatus) => void;
@@ -21,6 +24,10 @@ export class WorldClient {
   private pollTimer?: number;
   private hasPublishedSnapshot = false;
   private disposed = false;
+  // Socket frames patch terrain against the last authoritative snapshot, never a fallback one.
+  private authoritative?: PublicWorldSnapshot;
+  private lastFrameAt = 0;
+  private resyncing = false;
 
   get snapshot(): PublicWorldSnapshot {
     return this.snapshotValue;
@@ -83,6 +90,7 @@ export class WorldClient {
   private async loadAuthoritativeSnapshot(): Promise<void> {
     const snapshot = await this.fetchSnapshot();
     this.stopFallback();
+    this.authoritative = snapshot;
     this.publish(snapshot);
     this.setStatus("authoritative");
     this.connectSocket();
@@ -110,6 +118,11 @@ export class WorldClient {
   }
 
   private async refresh(): Promise<void> {
+    if (
+      this.socket?.readyState === WebSocket.OPEN &&
+      Date.now() - this.lastFrameAt < SOCKET_SILENCE_MS
+    )
+      return;
     try {
       await this.loadAuthoritativeSnapshot();
     } catch {
@@ -128,7 +141,15 @@ export class WorldClient {
     this.socket = new WebSocket(`${protocol}//${location.host}/api/ws`);
     this.socket.addEventListener("message", (event) => {
       try {
-        this.publish(JSON.parse(String(event.data)) as PublicWorldSnapshot);
+        const frame = JSON.parse(String(event.data)) as SnapshotFrame;
+        this.lastFrameAt = Date.now();
+        const snapshot = decodeSnapshotFrame(frame, this.authoritative);
+        if (!snapshot) {
+          this.resync();
+          return;
+        }
+        this.authoritative = snapshot;
+        this.publish(snapshot);
         this.setStatus("authoritative");
       } catch {
         // Ignore malformed frames and let polling recover.
@@ -140,6 +161,19 @@ export class WorldClient {
       if (this.statusValue === "authoritative") this.setStatus("stale");
       window.setTimeout(() => this.connectSocket(), 4_000);
     });
+  }
+
+  /** A terrain patch arrived for a base this client does not hold; reload the full snapshot. */
+  private resync(): void {
+    if (this.resyncing) return;
+    this.resyncing = true;
+    this.loadAuthoritativeSnapshot()
+      .catch(() => {
+        if (this.statusValue === "authoritative") this.setStatus("stale");
+      })
+      .finally(() => {
+        this.resyncing = false;
+      });
   }
 
   private stopFallback(): void {

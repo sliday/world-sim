@@ -41,6 +41,7 @@ import {
   type Station,
   type TerrainKind,
   type Tile,
+  type Vec2,
   type WorldEvent,
   type WorldMetrics,
   type WorldState,
@@ -677,6 +678,25 @@ function localSpeech(state: WorldState, agent: Agent): string {
   return "Ground plain here, keep searching.";
 }
 
+// Tile kinds are fixed when the terrain is generated, so each terrain array's sampled tiles are
+// grouped by material once, in scan order; a search then visits only its material's tiles.
+const sampledTilesByMaterial = new WeakMap<Tile[], Record<MaterialKind, Vec2[]>>();
+
+function sampledMaterialTiles(terrain: Tile[], material: MaterialKind): Vec2[] {
+  let byMaterial = sampledTilesByMaterial.get(terrain);
+  if (!byMaterial) {
+    byMaterial = { water: [], fungus: [], mineral: [], cellulose: [], chitin: [] };
+    for (let y = 0; y < WORLD_HEIGHT; y += 2) {
+      for (let x = 0; x < WORLD_WIDTH; x += 2) {
+        const tileMaterial = materialForTerrain[terrain[tileIndex(x, y)]!.terrain];
+        if (tileMaterial) byMaterial[tileMaterial].push({ x, y });
+      }
+    }
+    sampledTilesByMaterial.set(terrain, byMaterial);
+  }
+  return byMaterial[material];
+}
+
 function resourcePosition(
   state: WorldState,
   material: MaterialKind,
@@ -688,29 +708,28 @@ function resourcePosition(
   let richestFallback: { x: number; y: number } | undefined;
   let richestFallbackValue = Number.NEGATIVE_INFINITY;
   let richestFallbackDistance = Number.POSITIVE_INFINITY;
-  for (let y = 0; y < WORLD_HEIGHT; y += 2) {
-    for (let x = 0; x < WORLD_WIDTH; x += 2) {
-      const tile = tileAt(state, x, y);
-      if (materialForTerrain[tile.terrain] !== material) continue;
-      const point = { x, y };
-      const distance = distanceSquared(agent, point);
-      if (
-        tile.richness > richestFallbackValue ||
-        (tile.richness === richestFallbackValue && distance < richestFallbackDistance)
-      ) {
-        richestFallback = point;
-        richestFallbackValue = tile.richness;
-        richestFallbackDistance = distance;
-      }
-      if (tile.richness < 0.12) continue;
-      const score = distance + (1 - tile.richness) * 3 + hashNoise(identitySeed, x, y) * 2;
-      if (score < bestViableScore) {
-        bestViable = point;
-        bestViableScore = score;
-      }
+  for (const point of sampledMaterialTiles(state.terrain, material)) {
+    const { x, y } = point;
+    const tile = tileAt(state, x, y);
+    const distance = distanceSquared(agent, point);
+    if (
+      tile.richness > richestFallbackValue ||
+      (tile.richness === richestFallbackValue && distance < richestFallbackDistance)
+    ) {
+      richestFallback = point;
+      richestFallbackValue = tile.richness;
+      richestFallbackDistance = distance;
+    }
+    if (tile.richness < 0.12) continue;
+    const score = distance + (1 - tile.richness) * 3 + hashNoise(identitySeed, x, y) * 2;
+    if (score < bestViableScore) {
+      bestViable = point;
+      bestViableScore = score;
     }
   }
-  return bestViable ?? richestFallback ?? { x: agent.x, y: agent.y };
+  // Callers only read the target, but hand out a copy so the shared index stays untouched.
+  const target = bestViable ?? richestFallback;
+  return target ? { x: target.x, y: target.y } : { x: agent.x, y: agent.y };
 }
 
 function stepToward(agent: Agent, target: { x: number; y: number }, rng: Rng): void {
