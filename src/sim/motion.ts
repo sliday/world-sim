@@ -6,15 +6,27 @@ export function wrappedTarget(current: number, next: number, size: number): numb
   return current + delta;
 }
 
+const SNAP_RESPONSE_MS = 180;
+
 export function easeToward(
   current: number,
   target: number,
   elapsedMs: number,
-  responseMs = 180,
+  responseMs = SNAP_RESPONSE_MS,
 ): number {
   if (Math.abs(target - current) < 0.0001) return target;
   const alpha = 1 - Math.exp(-Math.min(Math.max(elapsedMs, 0), 50) / responseMs);
   return current + (target - current) * alpha;
+}
+
+/**
+ * Easing response for one snapshot's movement. The expected gap to the next snapshot is the
+ * world's tick interval, shortened when snapshots arrive faster (catch-up bursts). A quarter of
+ * that gap leaves about 2% of the move at the next snapshot, so bots glide instead of hopping.
+ * A zero gap (first snapshot, world replaced) settles at the original fast response.
+ */
+export function glideResponseMs(msPerTick: number, measuredGapMs: number): number {
+  return Math.max(SNAP_RESPONSE_MS, Math.min(msPerTick, Math.max(measuredGapMs, 0)) / 4);
 }
 
 export function normalizeSettled(value: number, target: number, size: number): [number, number] {
