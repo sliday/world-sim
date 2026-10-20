@@ -220,6 +220,19 @@ a:focus-visible {
   box-shadow: 2px 2px 0 var(--ink);
 }
 
+a.pixel-button {
+  text-decoration: none;
+}
+
+@media (max-width: 600px) {
+  /* Stack below the row so phones keep the existing header width. */
+  .top-actions .ranking-link {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+  }
+}
+
 .event-panel {
   position: absolute;
   z-index: 2;

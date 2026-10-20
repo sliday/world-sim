@@ -70,6 +70,21 @@ The hourly world diary is an observer layer over Algorithm 1's `AppendTrace`, no
 
 Crafting borrows Infinite Craft's legible pairwise-combination loop, but not its unconstrained ontology. A Creative Session may propose a material pair and a reusable program only from the typed action DSL. The host records that proposal as a physical commitment, seeks missing ingredients, and registers the skill only after both ingredients are consumed. Duplicate or invalid mixes consume the attempt without satisfying curiosity. Successful recipes become craftable knowledge that another agent can reproduce from the same materials. This preserves SwarmWorld's separation of cognition, transactional validation, deterministic execution, memory, and trace append.
 
+## Hierarchy ranking
+
+`/ranking` asks whether a hierarchy forms among the bots. It ranks each bot by prestige measured from deference between bots, never from an assigned role.
+
+- A deference link runs from bot A to bot B when A uses or inspects B's artifact (weight 1), measures its service (+1), repairs it (+1), forks it (3, and 1 for each older author in that lineage), or learns a skill B authored (3). Forking and learning weigh more because they cost a build or two gathered materials.
+- Speech does not count. Bots address the nearest bot, recipients cannot refuse a message, and the world never records whether a listener acted on it. The page shows heard-by counts for context only.
+- Prestige is weighted PageRank over those links with damping 0.85, so deference from a respected bot counts more. 1.00 is an equal share.
+- The population metrics are the Gini and top-10% share of prestige above the PageRank floor, triad transitivity (1 for a strict ladder, 0 for random direction), and the deepest fork generation. A seeded null model keeps every bot's outgoing links and re-aims each one at a random bot 100 times. Concentration counts as beyond chance when fewer than 5% of those shuffles reach the measured Gini. The null ignores geography, so a bot beside a busy station can exceed chance without anyone choosing it.
+- Below 10 links the page shows no ranking, and below 5 fully resolved triads it shows no transitivity. `src/sim/hierarchy.ts` returns those metrics as undefined, never as 0.
+- The Durable Object writes a snapshot to its SQLite `hierarchy_snapshots` table every 600 ticks. Past 720 rows it drops every other row in the older half, so the series keeps its first row and full span at coarser spacing. `GET /api/hierarchy` returns the current ranking and the series.
+- Tracking starts at deploy. The first row is a labeled baseline of the state at that moment, which already includes links built earlier; no earlier history is reconstructed.
+- The ranking reads artifacts and skills that still exist. `computeHierarchy` accepts optional fossil records so retired artifacts and extinct skills keep their links once an archive supplies them.
+- Bots never see their rank. The hierarchy module feeds no observation, memory, or model prompt, and a test checks that measuring leaves the world unchanged.
+- Without the Worker, the page computes the current ranking from the local fallback simulation and marks history unavailable.
+
 ## Local development
 
 ```bash

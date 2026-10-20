@@ -66,6 +66,7 @@ app.innerHTML = `
     <div class="top-actions">
       <span id="engine-status" class="engine-status"><b></b> CONNECTING</span>
       <button id="craft-tree-button" class="pixel-button" type="button"><i class="hn hn-code-block"></i> CRAFT TREE</button>
+      <a class="pixel-button ranking-link" href="/ranking"><i class="hn hn-trophy"></i> RANKING</a>
       <button id="about-button" class="pixel-button" type="button"><i class="hn hn-info-circle"></i> ABOUT</button>
     </div>
 

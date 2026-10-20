@@ -35,6 +35,8 @@ import {
   WORLD_DIARY_INTERVAL_TICKS,
 } from "../src/sim/world-diary";
 import { runHeldOutAssay } from "../src/sim/held-out-assay";
+import type { HierarchyApiResponse } from "../src/sim/hierarchy";
+import { HierarchyHistoryStore } from "./hierarchy-history";
 import { CLEF_MODEL, ClefDecisionError, requestClefDirective } from "../src/sim/clef-decisions";
 import type {
   AgentActionProposal,
@@ -307,6 +309,7 @@ function openRouterEnabled(env: Env): boolean {
 export class WorldRoom extends DurableObject<Env> {
   private world?: WorldState;
   private policy?: PolicyExports;
+  private hierarchyStore?: HierarchyHistoryStore;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -735,6 +738,25 @@ export class WorldRoom extends DurableObject<Env> {
     return runHeldOutAssay(await this.load());
   }
 
+  private hierarchyHistory(): HierarchyHistoryStore {
+    return (this.hierarchyStore ??= new HierarchyHistoryStore(this.ctx.storage.sql));
+  }
+
+  private recordHierarchy(world: WorldState): void {
+    try {
+      this.hierarchyHistory().maybeRecord(world);
+    } catch (error) {
+      // Measurement is observer-only and must never hold back world time.
+      console.error("hierarchy snapshot failed", error);
+    }
+  }
+
+  async hierarchy(): Promise<HierarchyApiResponse> {
+    const world = await this.load();
+    this.recordHierarchy(world);
+    return this.hierarchyHistory().response(world);
+  }
+
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket")
       return new Response("Expected WebSocket", { status: 426 });
@@ -795,6 +817,7 @@ export class WorldRoom extends DurableObject<Env> {
           socket.close(1011, "snapshot delivery failed");
         }
       }
+      this.recordHierarchy(world);
     } finally {
       // Keep the world waking even when model, persistence, or socket delivery fails.
       await this.ctx.storage.setAlarm(
@@ -1394,6 +1417,8 @@ export default {
       return json(await world.worldDiary());
     if (url.pathname === "/api/held-out-assay" && request.method === "GET")
       return json(await world.heldOutAssay());
+    if (url.pathname === "/api/hierarchy" && request.method === "GET")
+      return json(await world.hierarchy());
     if (url.pathname === "/api/ws") return world.fetch(request);
     if (url.pathname.startsWith("/api/") && request.method !== "GET")
       return json({ error: "Method not allowed" }, { status: 405, headers: { Allow: "GET" } });
