@@ -4,7 +4,7 @@ import { buildCraftGraphLayout, type CraftGraphNode } from "./sim/craft-graph";
 import { buildCraftTree, craftMaterials, type CraftTreePairing } from "./sim/craft-tree";
 import "./style.css";
 import { WorldClient, type WorldClientStatus } from "./sim/client";
-import { createWorldSketch } from "./sim/renderer";
+import { createWorldSketch, heatLegend } from "./sim/renderer";
 import { formatTickAge } from "./sim/tick-age";
 import type {
   Agent,
@@ -65,8 +65,16 @@ app.innerHTML = `
 
     <div class="top-actions">
       <span id="engine-status" class="engine-status"><b></b> CONNECTING</span>
+      <button id="heat-button" class="pixel-button" type="button" aria-pressed="false" aria-controls="heat-key"><i class="hn hn-fire"></i> HEAT</button>
       <button id="craft-tree-button" class="pixel-button" type="button"><i class="hn hn-code-block"></i> CRAFT TREE</button>
       <button id="about-button" class="pixel-button" type="button"><i class="hn hn-info-circle"></i> ABOUT</button>
+    </div>
+
+    <div id="heat-key" class="heat-key glass-panel" aria-label="Heat legend" hidden>
+      <span class="heat-key-title">TIME SPENT HERE</span>
+      <span class="heat-key-ramp"><small>LOW</small><i style="background: ${heatLegend.ramp}"></i><small>HIGH</small></span>
+      <span class="heat-key-title">MOSTLY DOING</span>
+      <span class="heat-key-activities">${heatLegend.activities.map(({ mode, color }) => `<span><b style="background: ${color}"></b>${mode.toUpperCase()}</span>`).join("")}</span>
     </div>
 
     <section class="event-panel glass-panel" aria-label="Events in the world">
@@ -221,6 +229,31 @@ let craftGraphPointer = { x: 0, y: 0 };
 let craftGraphHasFitted = false;
 const longMemory = new Map<string, AgentLongMemory>();
 const renderer = createWorldSketch(canvasHost, client.snapshot, selectAgent);
+const heatButton = document.querySelector<HTMLButtonElement>("#heat-button")!;
+const heatKey = document.querySelector<HTMLElement>("#heat-key")!;
+const heatViewStorageKey = "stigmergy:heat-view";
+
+function setHeatView(strong: boolean): void {
+  renderer.setHeatView(strong ? "strong" : "faint");
+  heatButton.setAttribute("aria-pressed", String(strong));
+  heatKey.hidden = !strong;
+  try {
+    localStorage.setItem(heatViewStorageKey, strong ? "strong" : "faint");
+  } catch {
+    // Private windows and blocked storage keep the toggle for this visit only.
+  }
+}
+
+let storedHeatView: string | null = null;
+try {
+  storedHeatView = localStorage.getItem(heatViewStorageKey);
+} catch {
+  storedHeatView = null;
+}
+setHeatView(storedHeatView === "strong");
+heatButton.addEventListener("click", () =>
+  setHeatView(heatButton.getAttribute("aria-pressed") !== "true"),
+);
 const mobileTrace = window.matchMedia("(max-width: 600px)");
 
 function setTraceExpanded(expanded: boolean): void {

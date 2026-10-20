@@ -12,6 +12,7 @@ import {
   updateAgentScript,
   validateActionProposal,
 } from "./action-sandbox";
+import { emptyOccupancy, encodeOccupancyHeat, ensureOccupancy } from "./occupancy";
 import {
   emptyFossilRecord,
   ensurePruningState,
@@ -340,6 +341,7 @@ export function createInitialWorld(
     discoveryFrontierTrackedTicks: 0,
     stations: createStations(terrain, stationRng),
     events: [],
+    occupancy: emptyOccupancy(0),
     actionLibrary: baseActionLibrary(),
     fossils: emptyFossilRecord(),
     messages: [],
@@ -421,6 +423,7 @@ export function ensureAgentOperatingSystem(state: WorldState): WorldState {
   );
   state.discoveryFrontierArea ??= 0;
   state.discoveryFrontierTrackedTicks ??= 0;
+  state.occupancy = ensureOccupancy(state.occupancy, state.tick);
   if (state.agents.length < state.targetAgentCount) {
     const rng = new Rng(state.rngState);
     while (state.agents.length < state.targetAgentCount)
@@ -738,6 +741,7 @@ function roam(agent: Agent, rng: Rng): void {
 
 function recordTrail(agent: Agent, state: WorldState): void {
   agent.trajectory.observedTicks += 1;
+  state.occupancy.modes[agent.mode][tileIndex(agent.x, agent.y)] += 1;
   const artifact = nearest(agent, state.artifacts);
   if (artifact && isArtifactContact(agent, artifact)) agent.trajectory.artifactContactTicks += 1;
   const previous = agent.trail.at(-1);
@@ -1762,8 +1766,10 @@ export function publicSnapshot(
   nullclawPolicy = true,
 ): PublicWorldSnapshot {
   state.metrics = calculateMetrics(state);
+  const { occupancy, ...rest } = state;
   return {
-    ...structuredClone(state),
+    ...structuredClone(rest),
+    heat: encodeOccupancyHeat(occupancy),
     diary: [],
     engine: {
       mode: openRouterEnabled ? "openrouter-assisted" : "deterministic",
