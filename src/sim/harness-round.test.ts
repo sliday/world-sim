@@ -212,7 +212,9 @@ async function playRound(
   return { result, wired };
 }
 
-describe("Harness² round on the real modules", () => {
+// Rollouts are CPU-bound, and the default 5-second timeout is too tight when the whole suite
+// shares the machine.
+describe("Harness² round on the real modules", { timeout: 20_000 }, () => {
   it("parallel k=1 on a forced emergency-water decision", async () => {
     const { result, wired } = await playRound("parallel", 1);
 

@@ -62,7 +62,9 @@ import {
   harnessEventText,
   harnessRoundId,
   harnessRoundRow,
+  nextRoundTickAfter,
   pickRoundAgent,
+  ROUND_DEADLINE_MS,
   roundSeed,
   roundSkipReason,
   type HarnessConfig,
@@ -1028,6 +1030,7 @@ export class WorldRoom extends DurableObject<Env> {
       callsToday: world.llm.callsToday,
       dailyLimit,
       decisionBlockedUntil: world.llm.decisionBlockedUntil,
+      generationBlockedUntil: world.llm.generationBlockedUntil,
       now: Date.now(),
     });
     if (skip) return undefined;
@@ -1041,7 +1044,7 @@ export class WorldRoom extends DurableObject<Env> {
     if (!agent) return undefined;
     this.ctx.storage.sql.exec(
       "UPDATE harness_state SET next_round_tick = ? WHERE singleton = 1",
-      candidateTick + config.intervalTicks,
+      nextRoundTickAfter(candidateTick, config.intervalTicks),
     );
     return agent.id;
   }
@@ -1059,12 +1062,18 @@ export class WorldRoom extends DurableObject<Env> {
     const roundId = harnessRoundId(decisionTick, agentId);
     const usage = { calls: 0, cost: 0 };
     const transport = createClefClient(this.env.OPENROUTER_API_KEY!);
+    const deadline = Date.now() + ROUND_DEADLINE_MS;
     // Each stage and decision request counts against the daily cap like a routine call. A
-    // retryable error ends the round, so the cap, a cooldown, or a quota error aborts it at
-    // once. A quota error leaves the cooldown to the routine fallback: if that call succeeds,
-    // the round's error never pauses world time.
+    // retryable error ends the round, so the cap, a cooldown, the deadline, or a quota error
+    // aborts it at once. A quota error leaves the cooldown to the routine fallback: if that
+    // call succeeds, the round's error never pauses world time.
     const clef: ClefClient = {
       decide: async (requestState, questions) => {
+        if (Date.now() > deadline)
+          throw new ClefDecisionError(
+            `Harness round passed its ${ROUND_DEADLINE_MS / 1000}-second deadline`,
+            true,
+          );
         if ((world.llm.decisionBlockedUntil ?? 0) > Date.now())
           throw new ClefDecisionError("Clef decisions are on cooldown", true);
         if (world.llm.callsToday >= dailyLimit)
@@ -1146,7 +1155,9 @@ export class WorldRoom extends DurableObject<Env> {
       if (round.result?.entry) this.storeHarnessEntry(round.result.entry);
       this.storeHarnessRound(
         round.result
-          ? harnessRoundRow(round.result, agent.name, config)
+          ? // Report the requests charged to the daily cap. record.calls also counts decide()
+            // calls that the harness answered in full without sending a request.
+            { ...harnessRoundRow(round.result, agent.name, config), calls: round.calls }
           : failedHarnessRoundRow({
               roundId: round.roundId,
               tick,

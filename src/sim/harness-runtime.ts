@@ -6,7 +6,11 @@ import {
   prepareClefDecision,
   type ClefHarnessOptions,
 } from "./clef-decisions";
-import { decisionObservation, mechanismsForCondition } from "./engine";
+import {
+  decisionObservation,
+  mechanismsForCondition,
+  MODEL_MACROTURN_INTERVAL_TICKS,
+} from "./engine";
 import {
   applyEdits,
   applySkillTriggers,
@@ -206,6 +210,10 @@ export interface HarnessEnv {
  * routine decisions. */
 export const ROUND_MIN_REMAINING_CALLS = 40;
 
+/** A round starts no new Clef call after this long, so a slow provider cannot hold the
+ * world tick for a whole round's worth of 12-second request timeouts. */
+export const ROUND_DEADLINE_MS = 30_000;
+
 /** A whole number from an env string: anything else, or a value below `min`, falls back, and a
  * value above `max` is capped. */
 function boundedInteger(value: string | undefined, fallback: number, min: number, max: number) {
@@ -231,6 +239,8 @@ export interface RoundGate {
   callsToday: number;
   dailyLimit: number;
   decisionBlockedUntil?: number;
+  /** A round that selects build or create needs text generation to commit its directive. */
+  generationBlockedUntil?: number;
   now: number;
 }
 
@@ -239,9 +249,28 @@ export function roundSkipReason(gate: RoundGate): string | undefined {
   if (!gate.config.enabled) return "learning disabled";
   if (gate.tick < gate.nextRoundTick) return `next round at T${gate.nextRoundTick}`;
   if ((gate.decisionBlockedUntil ?? 0) > gate.now) return "Clef decisions are on cooldown";
+  if ((gate.generationBlockedUntil ?? 0) > gate.now) return "text generation is on cooldown";
   if (gate.dailyLimit - gate.callsToday < ROUND_MIN_REMAINING_CALLS)
     return `fewer than ${ROUND_MIN_REMAINING_CALLS} daily model calls remain`;
   return undefined;
+}
+
+function greatestCommonDivisor(a: number, b: number): number {
+  return b === 0 ? a : greatestCommonDivisor(b, a % b);
+}
+
+/** The first tick the next round may run after a round at `tick`. The agents due at one tick
+ * share its phase modulo the macroturn, so a gap that shares a factor with the macroturn would
+ * keep returning to the same few agents. The gap grows from `intervalTicks` to the next length
+ * coprime with the macroturn (61 for the default 60), and successive rounds walk every phase. */
+export function nextRoundTickAfter(
+  tick: number,
+  intervalTicks: number,
+  macroturn = MODEL_MACROTURN_INTERVAL_TICKS,
+): number {
+  let gap = intervalTicks;
+  while (greatestCommonDivisor(gap, macroturn) !== 1) gap += 1;
+  return tick + gap;
 }
 
 export function harnessRoundId(tick: number, agentId: string): string {

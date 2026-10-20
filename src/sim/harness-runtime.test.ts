@@ -20,6 +20,7 @@ import {
   harnessEventText,
   harnessRoundId,
   harnessRoundRow,
+  nextRoundTickAfter,
   pickRoundAgent,
   ROUND_MIN_REMAINING_CALLS,
   roundSeed,
@@ -257,6 +258,43 @@ describe("roundSkipReason", () => {
   it("skips while Clef decisions are blocked", () => {
     expect(roundSkipReason({ ...gate, decisionBlockedUntil: gate.now + 1 })).toMatch(/cooldown/);
     expect(roundSkipReason({ ...gate, decisionBlockedUntil: gate.now })).toBeUndefined();
+  });
+
+  it("skips while text generation is blocked, since a build or create pick would be lost", () => {
+    expect(roundSkipReason({ ...gate, generationBlockedUntil: gate.now + 1 })).toBe(
+      "text generation is on cooldown",
+    );
+    expect(roundSkipReason({ ...gate, generationBlockedUntil: gate.now })).toBeUndefined();
+  });
+});
+
+describe("nextRoundTickAfter", () => {
+  it("keeps at least the interval and makes the gap coprime with the 60-tick macroturn", () => {
+    expect(nextRoundTickAfter(600, 60)).toBe(661);
+    expect(nextRoundTickAfter(600, 59)).toBe(659);
+    expect(nextRoundTickAfter(600, 30)).toBe(631);
+    expect(nextRoundTickAfter(600, 6)).toBe(607);
+    expect(nextRoundTickAfter(600, 1)).toBe(601);
+    expect(nextRoundTickAfter(600, 120)).toBe(721);
+  });
+
+  it("lets successive rounds reach every agent, not only the first round's phase", () => {
+    // Only agents whose phase matches the tick modulo 60 can be due at that tick.
+    const { agents } = createInitialWorld(260826081, 0);
+    const reachable = (ticks: number[]) =>
+      new Set(
+        agents
+          .filter((agent) => ticks.some((tick) => (tick - agent.decisionPhase) % 60 === 0))
+          .map((agent) => agent.id),
+      );
+    const roundTicks = (step: (tick: number) => number) => {
+      const ticks = [601];
+      while (ticks.length < 60) ticks.push(step(ticks.at(-1)!));
+      return ticks;
+    };
+    expect(reachable(roundTicks((tick) => nextRoundTickAfter(tick, 60))).size).toBe(agents.length);
+    // The old fixed 60-tick gap kept every round on the first round's one or two agents.
+    expect(reachable(roundTicks((tick) => tick + 60)).size).toBeLessThanOrEqual(2);
   });
 });
 
