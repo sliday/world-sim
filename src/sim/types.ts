@@ -270,6 +270,19 @@ export interface WorldDiaryEntry {
   createdAt: number;
 }
 
+/** All-time agent-ticks per tile and activity, row-major over the planet, since `startedTick`. */
+export interface OccupancyLedger {
+  startedTick: number;
+  modes: Record<AgentMode, number[]>;
+}
+
+/** Wire form of the ledger: one base64 byte per tile, `dominantMode << 5 | log-scaled level`. */
+export interface OccupancyHeat {
+  startedTick: number;
+  peak: number;
+  tiles: string;
+}
+
 export interface WorldMetrics {
   activeAgents: number;
   artifacts: number;
@@ -309,6 +322,7 @@ export interface WorldState {
   discoveryFrontierTrackedTicks: number;
   stations: Station[];
   events: WorldEvent[];
+  occupancy: OccupancyLedger;
   actionLibrary: AgentActionDefinition[];
   messages: AgentMessage[];
   metrics: WorldMetrics;
@@ -324,7 +338,8 @@ export interface WorldState {
   };
 }
 
-export interface PublicWorldSnapshot extends WorldState {
+export interface PublicWorldSnapshot extends Omit<WorldState, "occupancy"> {
+  heat: OccupancyHeat;
   diary: WorldDiaryEntry[];
   engine: {
     mode: "deterministic" | "openrouter-assisted";
