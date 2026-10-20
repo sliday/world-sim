@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { botPortraitSvg, generateBotAppearance } from "./bot-appearance";
 import { modelActionPrimitives, registerAction } from "./action-sandbox";
 import {
+  advanceAgentFreeWorld,
   advanceWorld,
   applyDirective,
   artifactValidationEvidence,
@@ -10,6 +11,7 @@ import {
   controllerBehaviorDiffers,
   controllerBehaviorSignature,
   createInitialWorld,
+  CREATIVE_SESSION_COOLDOWN_TICKS,
   decisionAgentsDue,
   decisionObservation,
   decisionPhaseForAgent,
@@ -396,6 +398,46 @@ describe("deterministic consequence layer", () => {
     expect(agent.documents.memoryMd).toContain("no novel behavior was built");
   });
 
+  it("returns a bot to ordinary work when the policy core refuses its creative proposal", () => {
+    const world = createInitialWorld(260826081, 0);
+    const agent = world.agents[0]!;
+    const decisionTick = agent.nextDecisionTick;
+    agent.curiosity = 1;
+    expect(decisionObservation(world, agent).creativeSessionEligible).toBe(true);
+    expect(
+      applyDirective(
+        world,
+        agent.id,
+        {
+          goal: "create",
+          targetMaterial: "fungus",
+          controllerAction: "grow",
+          note: "mix local matter into a reusable sampling skill",
+          source: "openrouter",
+          actionId: "creative-session",
+          creativeSession: {
+            name: "Sample Arc",
+            icon: "✦",
+            algorithm:
+              "Sample matter underfoot, then follow the nearest requested resource gradient.",
+            program: ["scan-local", "gather-local", "seek-resource"],
+            ingredients: ["fungus", "mineral"],
+            purpose: "build a reusable material sampling behavior",
+          },
+        },
+        false,
+        decisionTick,
+      ),
+    ).toBe(true);
+
+    expect(agent.craftingTarget).toBeUndefined();
+    expect(agent.directive.goal).toBe("explore");
+    expect(agent.curiosity).toBe(1);
+    expect(decisionObservation(world, agent).creativeSessionEligible).toBe(false);
+    world.tick = decisionTick + CREATIVE_SESSION_COOLDOWN_TICKS;
+    expect(decisionObservation(world, agent).creativeSessionEligible).toBe(true);
+  });
+
   it("uses carried water for energy without erasing gathered materials", () => {
     const world = createInitialWorld(260826081, 0);
     const agent = world.agents[0]!;
@@ -667,6 +709,61 @@ describe("deterministic consequence layer", () => {
     expect({ x: agent.x, y: agent.y }).not.toEqual({ x: current.x, y: current.y });
     expect(agent.script.lastResult).toBe("seeking water");
   });
+
+  it("refills drained tidal water toward local moisture at a bounded tidal rate", () => {
+    const world = createInitialWorld(260826081, 0);
+    world.agents = [];
+    const tidal = world.terrain.filter((tile) => tile.terrain === "tidal");
+    const mineral = world.terrain.filter((tile) => tile.terrain === "mineral");
+    for (const tile of [...tidal, ...mineral]) tile.richness = 0.02;
+
+    // 2,300 ticks visit every tile 100 times.
+    advanceAgentFreeWorld(world, 2_300);
+
+    const meanTidal = tidal.reduce((total, tile) => total + tile.richness, 0) / tidal.length;
+    expect(meanTidal).toBeGreaterThan(0.12);
+    expect(meanTidal).toBeLessThan(0.3);
+    for (const tile of tidal) expect(tile.richness).toBeLessThan(tile.moisture);
+    for (const tile of mineral) expect(tile.richness).toBeCloseTo(0.02 + 100 * 0.00008, 6);
+  });
+
+  it("lets a population trapped on a drained shore refill water and resume building", () => {
+    const world = createInitialWorld(260826081, 0);
+    for (const tile of world.terrain) if (tile.terrain === "tidal") tile.richness = 0.08;
+    for (const agent of world.agents) {
+      agent.energy = 0.3;
+      agent.inventory = { water: 0, fungus: 6, mineral: 6, cellulose: 6, chitin: 6 };
+    }
+    const forcedToWater = () =>
+      world.agents.filter((agent) => agent.energy < 0.55 && agent.inventory.water < 1.5).length;
+    expect(forcedToWater()).toBe(world.agents.length);
+
+    for (let step = 0; step < 2_000; step += 1) {
+      const decisionTick = world.tick + 1;
+      for (const agent of decisionAgentsDue(world, decisionTick)) {
+        // The Worker forces a water refill below 0.55 energy and 1.5 carried water.
+        const refill = agent.energy < 0.55 && agent.inventory.water < 1.5;
+        applyDirective(
+          world,
+          agent.id,
+          {
+            goal: refill ? "gather" : "build",
+            targetMaterial: refill ? "water" : "mineral",
+            controllerAction: "collect-water",
+            note: refill ? "refill the water reserve" : "build from carried matter",
+            source: "openrouter",
+            actionId: refill ? "forage" : "fabricate",
+          },
+          false,
+          decisionTick,
+        );
+      }
+      advanceWorld(world, 1);
+    }
+
+    expect(forcedToWater()).toBeLessThan(world.agents.length * 0.25);
+    expect(world.agents.reduce((total, agent) => total + agent.builds, 0)).toBeGreaterThan(0);
+  }, 20_000);
 
   it("gives agents stable hash-derived names from a broad universal catalog", () => {
     const world = createInitialWorld(260826081, 0);
