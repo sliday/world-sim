@@ -26,6 +26,7 @@ import type {
   LibraryEntry,
   RoundResult,
 } from "./harness-types";
+import type { libraryIndex } from "./harness-library";
 import type { AgentDirective, InteractionCondition } from "./types";
 import { Rng } from "./rng";
 
@@ -42,12 +43,7 @@ export interface RoundInput {
 }
 
 /** The row shape of `libraryIndex` in harness-library.ts. */
-export interface LibraryIndexRow {
-  id: string;
-  cue: string;
-  lesson?: string;
-  confidence?: string;
-}
+export type LibraryIndexRow = ReturnType<typeof libraryIndex>[number];
 
 export interface RoundDecision {
   directives: AgentDirective[];
@@ -901,7 +897,8 @@ export async function runImprovementRound(
           createdTick: input.tick,
           agentId: input.agentId,
           condition: input.condition,
-          visibility: input.condition === "no-explicit-culture" ? input.agentId : "shared",
+          // Mirrors mechanismsForCondition(condition).skillLibrary, which only full culture enables.
+          visibility: input.condition === "full-culture" ? "shared" : input.agentId,
           cue: deps.cue,
           experience,
           harness: adoptedHarness,
