@@ -1,4 +1,12 @@
-import p5 from "p5";
+import p5 from "p5/core";
+import accessibility from "p5/accessibility";
+import color from "p5/color";
+import events from "p5/events";
+import image from "p5/image";
+import math from "p5/math";
+import shape from "p5/shape";
+import typography from "p5/type";
+import utilities from "p5/utilities";
 import { generateBotAppearance, type BotAppearance } from "./bot-appearance";
 import {
   clampOverlayAnchor,
@@ -21,6 +29,12 @@ import type {
   Vec2,
 } from "./types";
 import { WORLD_HEIGHT, WORLD_WIDTH } from "./types";
+
+// The full "p5" entry also bundles WebGL, shader tooling, DOM helpers and the Friendly Error
+// System, whose per-call argument checks cost about a quarter of each frame's script time. This 2D
+// sketch registers only the modules it draws with, in the order the full build registers them.
+for (const register of [shape, accessibility, color, events, image, math, utilities, typography])
+  register(p5);
 
 const CELL = 16;
 const MAP_WIDTH = WORLD_WIDTH * CELL;
@@ -119,6 +133,7 @@ export function createWorldSketch(
   update: (snapshot: PublicWorldSnapshot) => void;
   selectAgent: (agentId: string | null) => void;
   setHeatView: (view: HeatView) => void;
+  setPaused: (paused: boolean) => void;
   remove: () => void;
 } {
   let world = initial;
@@ -130,6 +145,8 @@ export function createWorldSketch(
   let heatView: HeatView = "faint";
   let worldCanvas: HTMLCanvasElement | undefined;
   let selectedAgentId: string | null = null;
+  // While a full-page view covers the map, frames keep ticking but draw nothing.
+  let paused = false;
   const visualAgentPositions = new Map<string, VisualAgentPosition>();
   const camera: Camera = {
     x: MAP_WIDTH * 0.52,
@@ -178,7 +195,7 @@ export function createWorldSketch(
     };
 
     p.draw = () => {
-      if (!terrainLayer) return;
+      if (!terrainLayer || paused) return;
       p.background("#101e20");
       advanceVisualAgents(visualAgentPositions, p.deltaTime, glideMs);
       updateCamera(p, world, camera, selectedAgentId, visualAgentPositions);
@@ -240,6 +257,9 @@ export function createWorldSketch(
       if (view === heatView) return;
       heatView = view;
       if (mapLayer && terrainLayer) paintMapLayer(mapLayer, terrainLayer, world.heat, heatView);
+    },
+    setPaused(next) {
+      paused = next;
     },
     remove() {
       terrainLayer?.remove();
@@ -532,10 +552,11 @@ function updateCamera(
 function drawInfiniteMap(p: p5, layer: p5.Graphics, camera: Camera): void {
   const viewWidth = p.width / camera.zoom;
   const viewHeight = p.height / camera.zoom;
-  const startX = Math.floor((camera.x - viewWidth / 2) / MAP_WIDTH) - 1;
-  const endX = Math.ceil((camera.x + viewWidth / 2) / MAP_WIDTH) + 1;
-  const startY = Math.floor((camera.y - viewHeight / 2) / MAP_HEIGHT) - 1;
-  const endY = Math.ceil((camera.y + viewHeight / 2) / MAP_HEIGHT) + 1;
+  // Blit only the map copies that overlap the view (plus a pixel of slack); the canvas clips the rest.
+  const startX = Math.floor((camera.x - viewWidth / 2 - 1) / MAP_WIDTH);
+  const endX = Math.floor((camera.x + viewWidth / 2 + 1) / MAP_WIDTH);
+  const startY = Math.floor((camera.y - viewHeight / 2 - 1) / MAP_HEIGHT);
+  const endY = Math.floor((camera.y + viewHeight / 2 + 1) / MAP_HEIGHT);
   for (let tileY = startY; tileY <= endY; tileY += 1) {
     for (let tileX = startX; tileX <= endX; tileX += 1) {
       p.image(layer, tileX * MAP_WIDTH, tileY * MAP_HEIGHT);
@@ -543,28 +564,41 @@ function drawInfiniteMap(p: p5, layer: p5.Graphics, camera: Camera): void {
   }
 }
 
+/**
+ * Draws each wrapped copy of a point that can reach the view. `margin` is how far, in world
+ * pixels, the drawing extends past its anchor; copies farther than that outside the view are
+ * skipped. Without a margin, copies within a whole viewport of the camera draw, which edge-clamped
+ * overlays rely on.
+ */
 function visibleCopies(
   p: p5,
   point: Vec2,
   camera: Camera,
   draw: (x: number, y: number) => void,
+  margin?: number,
 ): void {
   const baseX = point.x * CELL + CELL / 2;
   const baseY = point.y * CELL + CELL / 2;
   const centerTileX = Math.round((camera.x - baseX) / MAP_WIDTH);
   const centerTileY = Math.round((camera.y - baseY) / MAP_HEIGHT);
+  const reachX = margin === undefined ? p.width / camera.zoom : p.width / 2 / camera.zoom + margin;
+  const reachY =
+    margin === undefined ? p.height / camera.zoom : p.height / 2 / camera.zoom + margin;
   for (let oy = -1; oy <= 1; oy += 1) {
     for (let ox = -1; ox <= 1; ox += 1) {
       const x = baseX + (centerTileX + ox) * MAP_WIDTH;
       const y = baseY + (centerTileY + oy) * MAP_HEIGHT;
-      if (
-        Math.abs(x - camera.x) < p.width / camera.zoom &&
-        Math.abs(y - camera.y) < p.height / camera.zoom
-      )
-        draw(x, y);
+      if (Math.abs(x - camera.x) < reachX && Math.abs(y - camera.y) < reachY) draw(x, y);
     }
   }
 }
+
+// Farthest each entity draws from its anchor, in world pixels, with room for antialiasing.
+const STATION_REACH = 16;
+const ARTIFACT_REACH = 24;
+const EVENT_RING_REACH = 32;
+// Agent marks scale against zoom so their screen size stays fixed.
+const agentReach = (zoom: number): number => 24 + 32 / zoom;
 
 function drawWorldEntities(
   p: p5,
@@ -574,24 +608,40 @@ function drawWorldEntities(
   visualAgentPositions: ReadonlyMap<string, VisualAgentPosition>,
 ): void {
   for (const station of world.stations)
-    visibleCopies(p, station, camera, (x, y) => drawStation(p, station, x, y));
+    visibleCopies(p, station, camera, (x, y) => drawStation(p, station, x, y), STATION_REACH);
   for (const artifact of world.artifacts)
-    visibleCopies(p, artifact, camera, (x, y) => drawArtifact(p, artifact, x, y, world.tick));
+    visibleCopies(
+      p,
+      artifact,
+      camera,
+      (x, y) => drawArtifact(p, artifact, x, y, world.tick),
+      ARTIFACT_REACH,
+    );
   drawAgentTrails(p, world, camera, selectedAgentId, visualAgentPositions);
   for (const agent of world.agents)
-    visibleCopies(p, visualAgentPositions.get(agent.id) ?? agent, camera, (x, y) =>
-      drawAgent(p, agent, x, y, agent.id === selectedAgentId, world.seed, camera.zoom),
+    visibleCopies(
+      p,
+      visualAgentPositions.get(agent.id) ?? agent,
+      camera,
+      (x, y) => drawAgent(p, agent, x, y, agent.id === selectedAgentId, world.seed, camera.zoom),
+      agentReach(camera.zoom),
     );
   drawSpeech(p, world, camera, visualAgentPositions);
   const current = world.events[0];
   if (current) {
-    visibleCopies(p, current, camera, (x, y) => {
-      const radius = 18 + ((p.frameCount * 0.8) % 28);
-      p.noFill();
-      p.stroke(255, 244, 190, Math.max(0, 120 - radius * 2));
-      p.strokeWeight(1);
-      p.circle(x, y, radius);
-    });
+    visibleCopies(
+      p,
+      current,
+      camera,
+      (x, y) => {
+        const radius = 18 + ((p.frameCount * 0.8) % 28);
+        p.noFill();
+        p.stroke(255, 244, 190, Math.max(0, 120 - radius * 2));
+        p.strokeWeight(1);
+        p.circle(x, y, radius);
+      },
+      EVENT_RING_REACH,
+    );
   }
 }
 
@@ -602,6 +652,8 @@ function drawAgentTrails(
   selectedAgentId: string | null,
   visualAgentPositions: ReadonlyMap<string, VisualAgentPosition>,
 ): void {
+  // p5 fills every shape while a fill is set, and a line has no area to fill; skip that call.
+  p.noFill();
   for (const agent of world.agents) {
     const selected = agent.id === selectedAgentId;
     // Like the paper's trajectory figures, show a deterministic subset to preserve legibility.
@@ -614,27 +666,37 @@ function drawAgentTrails(
       const from = points[index - 1]!;
       const to = points[index]!;
       const age = index / points.length;
-      visibleCopies(p, from, camera, (x, y) => {
-        p.stroke(
-          `hsla(${agent.color}, 72%, 72%, ${selected ? 0.25 + age * 0.65 : 0.05 + age * 0.2})`,
-        );
-        p.strokeWeight(selected ? 1.6 : 0.75);
-        p.line(
-          x,
-          y,
-          x + wrappedDelta(from.x, to.x, WORLD_WIDTH) * CELL,
-          y + wrappedDelta(from.y, to.y, WORLD_HEIGHT) * CELL,
-        );
-      });
+      const dx = wrappedDelta(from.x, to.x, WORLD_WIDTH) * CELL;
+      const dy = wrappedDelta(from.y, to.y, WORLD_HEIGHT) * CELL;
+      visibleCopies(
+        p,
+        from,
+        camera,
+        (x, y) => {
+          p.stroke(
+            `hsla(${agent.color}, 72%, 72%, ${selected ? 0.25 + age * 0.65 : 0.05 + age * 0.2})`,
+          );
+          p.strokeWeight(selected ? 1.6 : 0.75);
+          p.line(x, y, x + dx, y + dy);
+        },
+        // A segment stays within its own length of its start.
+        Math.max(Math.abs(dx), Math.abs(dy)) + 4,
+      );
     }
     if (selected) {
       const start = points[0]!;
-      visibleCopies(p, start, camera, (x, y) => {
-        p.noFill();
-        p.stroke(242, 237, 207, 150);
-        p.strokeWeight(1);
-        p.circle(x, y, 5);
-      });
+      visibleCopies(
+        p,
+        start,
+        camera,
+        (x, y) => {
+          p.noFill();
+          p.stroke(242, 237, 207, 150);
+          p.strokeWeight(1);
+          p.circle(x, y, 5);
+        },
+        8,
+      );
     }
   }
 }

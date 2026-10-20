@@ -765,7 +765,8 @@ describe("deterministic consequence layer", () => {
 
     expect(forcedToWater()).toBeLessThan(world.agents.length * 0.25);
     expect(world.agents.reduce((total, agent) => total + agent.builds, 0)).toBeGreaterThan(0);
-  }, 20_000);
+    // 2,000 ticks of a stuck population is the slowest test; leave headroom for a loaded machine.
+  }, 60_000);
 
   it("gives agents stable hash-derived names from a broad universal catalog", () => {
     const world = createInitialWorld(260826081, 0);

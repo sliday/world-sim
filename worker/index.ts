@@ -37,6 +37,7 @@ import {
   WORLD_DIARY_INTERVAL_TICKS,
 } from "../src/sim/world-diary";
 import { runHeldOutAssay } from "../src/sim/held-out-assay";
+import { encodeSnapshotFrame, type SentTerrain } from "../src/sim/snapshot-stream";
 import type { HierarchyApiResponse } from "../src/sim/hierarchy";
 import { HierarchyHistoryStore } from "./hierarchy-history";
 import { ARTIFACT_DECAY_WINDOW_TICKS, SKILL_FORGETTING_WINDOW_TICKS } from "../src/sim/pruning";
@@ -313,6 +314,8 @@ export class WorldRoom extends DurableObject<Env> {
   private world?: WorldState;
   private policy?: PolicyExports;
   private hierarchyStore?: HierarchyHistoryStore;
+  // Terrain of the last broadcast; lost on eviction, so the next frame is then a full snapshot.
+  private sentTerrain?: SentTerrain;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -827,7 +830,9 @@ export class WorldRoom extends DurableObject<Env> {
       }
       await this.maybeWriteWorldDiary(world);
       await this.ctx.storage.put("world-v2", world);
-      const payload = JSON.stringify(this.publicSnapshot(world));
+      const snapshot = this.publicSnapshot(world);
+      const payload = JSON.stringify(encodeSnapshotFrame(snapshot, this.sentTerrain));
+      this.sentTerrain = { tick: snapshot.tick, terrain: snapshot.terrain };
       for (const socket of this.ctx.getWebSockets()) {
         try {
           socket.send(payload);
