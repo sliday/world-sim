@@ -272,6 +272,12 @@ export interface WorldDiaryEntry {
   createdAt: number;
 }
 
+/** Wall-clock length of each world tick from `fromTick` until the next epoch begins. */
+export interface TickEpoch {
+  fromTick: number;
+  msPerTick: number;
+}
+
 export interface WorldMetrics {
   activeAgents: number;
   artifacts: number;
@@ -303,6 +309,7 @@ export interface WorldState {
   rngState: number;
   tick: number;
   lastAdvancedAt: number;
+  tickEpochs: TickEpoch[];
   terrain: Tile[];
   agents: Agent[];
   artifacts: Artifact[];

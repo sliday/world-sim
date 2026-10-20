@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import agentCore from "./nullclaw/agent_core.wasm";
 import { generateAgentName } from "../src/sim/names";
+import { withTickRate } from "../src/sim/tick-age";
 import {
   advanceWorld,
   applyDirective,
@@ -641,6 +642,12 @@ export class WorldRoom extends DurableObject<Env> {
       // A public observatory should open on a living ecology, not an empty loading screen.
       advanceWorld(this.world, 480);
     }
+    // Ticks after this one run at the configured interval; age labels read this rate history.
+    this.world.tickEpochs = withTickRate(
+      this.world.tickEpochs,
+      this.world.tick,
+      positiveInteger(this.env.ALARM_INTERVAL_MS, 1_000, 60_000),
+    );
     this.seedAgentMemories(this.world);
     this.ensureDiaryState(this.world);
     return this.world;

@@ -1,5 +1,6 @@
 import { hashNoise, Rng, toroidalField } from "./rng";
 import { generateAgentName } from "./names";
+import { LEGACY_MS_PER_TICK } from "./tick-age";
 import {
   actionIdForGoal,
   assignableActionIcons,
@@ -319,6 +320,7 @@ export function createInitialWorld(
     rngState: rng.snapshot,
     tick: 0,
     lastAdvancedAt: now,
+    tickEpochs: [{ fromTick: 0, msPerTick: LEGACY_MS_PER_TICK }],
     terrain,
     agents: createAgents(terrain, rng, seed, populationSize),
     artifacts: [],
@@ -348,6 +350,8 @@ export function ensureAgentOperatingSystem(state: WorldState): WorldState {
   const previousVersion = Number(state.version);
   state.version = 11;
   state.interactionCondition ??= "full-culture";
+  if (!state.tickEpochs?.length)
+    state.tickEpochs = [{ fromTick: 0, msPerTick: LEGACY_MS_PER_TICK }];
   state.targetAgentCount = Math.max(
     state.agents.length,
     Math.max(
