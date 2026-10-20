@@ -13,6 +13,7 @@ import {
   createInitialWorld,
   CREATIVE_SESSION_COOLDOWN_TICKS,
   decisionAgentsDue,
+  decisionHoldStats,
   decisionObservation,
   decisionPhaseForAgent,
   deliverMessagesDue,
@@ -24,6 +25,7 @@ import {
   nextScheduledDecisionTick,
   normalizeSpeech,
   realizedPortfolioScore,
+  recordFailedDecision,
 } from "./engine";
 import { agentNameCatalog, generateAgentName } from "./names";
 import {
@@ -1136,6 +1138,211 @@ describe("deterministic consequence layer", () => {
     expect(agent.script.revision).toBe(revision);
     expect(agent.script.updatedTick).toBe(updatedTick);
   });
+
+  const heldDirective: AgentDirective = {
+    goal: "explore",
+    targetMaterial: "mineral",
+    controllerAction: "grow",
+    note: "hold a stable activity",
+    source: "openrouter",
+    holdMacroturns: 8,
+  };
+
+  function holdFirstAgent(world: WorldState, directive = heldDirective) {
+    const agent = world.agents[0]!;
+    advanceWorld(world, agent.nextDecisionTick - 1 - world.tick);
+    agent.energy = 0.9;
+    agent.inventory.water = 3;
+    const decisionTick = agent.nextDecisionTick;
+    expect(applyDirective(world, agent.id, directive, false, decisionTick)).toBe(true);
+    expect(agent.nextDecisionTick).toBe(decisionTick + 8 * MODEL_MACROTURN_INTERVAL_TICKS);
+    return { agent, decisionTick };
+  }
+
+  it("schedules Clef holds as whole macroturns on the agent's fixed phase", () => {
+    const world = createInitialWorld(15, 0);
+    const agent = world.agents[0]!;
+    const decisionTick = agent.nextDecisionTick;
+    const held = { ...heldDirective, holdMacroturns: 4 as const };
+    expect(
+      applyDirective(world, agent.id, { ...held, holdMacroturns: 3 as 4 }, false, decisionTick),
+    ).toBe(false);
+    expect(agent.nextDecisionTick).toBe(decisionTick);
+    expect(applyDirective(world, agent.id, held, false, decisionTick)).toBe(true);
+    expect(agent.directive.holdMacroturns).toBe(4);
+    expect(agent.nextDecisionTick).toBe(decisionTick + 4 * MODEL_MACROTURN_INTERVAL_TICKS);
+    for (const skipped of [1, 2, 3])
+      expect(
+        decisionAgentsDue(world, decisionTick + skipped * MODEL_MACROTURN_INTERVAL_TICKS),
+      ).not.toContain(agent);
+    expect(decisionAgentsDue(world, agent.nextDecisionTick)).toContain(agent);
+    expect(world.llm.holdSkipsScheduled).toBe(3);
+    expect(decisionHoldStats(world).meanScheduledHoldMacroturns).toBeCloseTo(1.03);
+
+    for (const directive of [
+      { ...heldDirective, source: "instinct" as const },
+      { ...heldDirective, holdMacroturns: undefined },
+    ]) {
+      const tick = agent.nextDecisionTick;
+      expect(applyDirective(world, agent.id, directive, false, tick)).toBe(true);
+      expect(agent.directive.holdMacroturns).toBe(1);
+      expect(agent.nextDecisionTick).toBe(tick + MODEL_MACROTURN_INTERVAL_TICKS);
+    }
+    const failedTick = agent.nextDecisionTick;
+    expect(recordFailedDecision(world, agent.id, failedTick, "invalid model decision")).toBe(true);
+    expect(agent.nextDecisionTick).toBe(failedTick + MODEL_MACROTURN_INTERVAL_TICKS);
+    expect(world.llm.holdSkipsScheduled).toBe(3);
+
+    const legacy = world.llm as Partial<WorldState["llm"]>;
+    delete legacy.holdWakeUps;
+    delete legacy.holdSkipsScheduled;
+    ensureAgentOperatingSystem(world);
+    expect(world.llm).toMatchObject({ holdWakeUps: 0, holdSkipsScheduled: 0 });
+  });
+
+  it("keeps a hold while carried water still covers low energy", () => {
+    const world = createInitialWorld(16, 0);
+    const { agent, decisionTick } = holdFirstAgent(world);
+    agent.energy = 0.3;
+    advanceWorld(world, 2);
+    expect(agent.nextDecisionTick).toBe(decisionTick + 8 * MODEL_MACROTURN_INTERVAL_TICKS);
+    expect(world.llm.holdWakeUps).toBe(0);
+  });
+
+  it.each(["low reserve", "reboot"] as const)(
+    "wakes a holding agent at its next phase after a %s",
+    (trigger) => {
+      const world = createInitialWorld(16, 0);
+      const { agent, decisionTick } = holdFirstAgent(world);
+      advanceWorld(world, 1);
+      expect(agent.nextDecisionTick).toBe(decisionTick + 8 * MODEL_MACROTURN_INTERVAL_TICKS);
+      agent.energy = trigger === "reboot" ? 0.001 : 0.3;
+      agent.inventory.water = trigger === "reboot" ? 0 : 1;
+      advanceWorld(world, 1);
+      if (trigger === "reboot") expect(world.events[0]?.text).toContain("rebooted");
+      expect(agent.nextDecisionTick).toBe(decisionTick + MODEL_MACROTURN_INTERVAL_TICKS);
+      expect(agent.nextDecisionTick).toBe(
+        nextScheduledDecisionTick(world.tick, agent.decisionPhase),
+      );
+      expect(world.llm).toMatchObject({ holdWakeUps: 1, holdSkipsScheduled: 0 });
+      advanceWorld(world, 3);
+      expect(world.llm.holdWakeUps).toBe(1);
+      expect(decisionAgentsDue(world, decisionTick + MODEL_MACROTURN_INTERVAL_TICKS)).toContain(
+        agent,
+      );
+    },
+  );
+
+  it("wakes a holding agent after its program fails for a full cycle", () => {
+    const world = createInitialWorld(17, 0);
+    world.artifacts = [];
+    const { agent, decisionTick } = holdFirstAgent(world);
+    agent.script.program = ["inspect-local", "repair-local"];
+    advanceWorld(world, 1);
+    expect(agent.failedPrimitiveStreak).toBe(1);
+    expect(agent.nextDecisionTick).toBe(decisionTick + 8 * MODEL_MACROTURN_INTERVAL_TICKS);
+    advanceWorld(world, 1);
+    expect(agent.nextDecisionTick).toBe(decisionTick + MODEL_MACROTURN_INTERVAL_TICKS);
+    expect(world.llm.holdWakeUps).toBe(1);
+  });
+
+  it.each(["completes", "fails"] as const)(
+    "wakes a holding agent when its crafting commitment %s",
+    (outcome) => {
+      const world = createInitialWorld(18, 0);
+      world.actionLibrary.push({
+        id: "woven-filter",
+        name: "Woven filter",
+        icon: "◇",
+        algorithm: "Combine fungus and cellulose.",
+        program: ["craft-local"],
+        recipe: ["fungus", "cellulose"],
+        authorId: "A002",
+        createdTick: 0,
+        uses: 0,
+      });
+      const agent = world.agents[0]!;
+      agent.craftingTarget = {
+        mode: "craft",
+        actionId: outcome === "completes" ? "woven-filter" : "lost-recipe",
+        actionName: "Woven filter",
+        ingredients: ["fungus", "cellulose"],
+        purpose: "learn and preserve Woven filter",
+        startedTick: 0,
+      };
+      agent.inventory.fungus = 2;
+      agent.inventory.cellulose = 2;
+      const { decisionTick } = holdFirstAgent(world, { ...heldDirective, goal: "craft" });
+      expect(agent.script.program[0]).toBe("craft-local");
+      advanceWorld(world, 1);
+      expect(agent.craftingTarget).toBeUndefined();
+      expect(agent.crafts).toBe(outcome === "completes" ? 1 : 0);
+      expect(agent.nextDecisionTick).toBe(decisionTick + MODEL_MACROTURN_INTERVAL_TICKS);
+      expect(world.llm.holdWakeUps).toBe(1);
+    },
+  );
+
+  it("delivers queued speech at a woken recipient's early decision", () => {
+    const world = createInitialWorld(19, 0);
+    const { agent: recipient, decisionTick } = holdFirstAgent(world);
+    advanceWorld(world, 1);
+    const sender = world.agents[1]!;
+    sender.x = recipient.x + 1;
+    sender.y = recipient.y;
+    expect(deliverSpeech(world, sender.id, "Mineral east here.")).toBe(true);
+    recipient.energy = 0.3;
+    recipient.inventory.water = 0;
+    advanceWorld(world, 1);
+    expect(recipient.nextDecisionTick).toBe(decisionTick + MODEL_MACROTURN_INTERVAL_TICKS);
+    expect(deliverMessagesDue(world, recipient.id, recipient.nextDecisionTick)).toBe(1);
+  });
+
+  it("keeps held and woken decisions on fixed phases and counts avoided decisions", () => {
+    const world = createInitialWorld(20, 0);
+    const holds = [1, 2, 4, 8] as const;
+    const activities = ["gather", "explore", "build", "inspect", "maintain"] as const;
+    const decisions = new Map<string, number[]>();
+    const offPhase: string[] = [];
+    for (let candidate = 1; candidate <= 1_200; candidate += 1) {
+      const due = decisionAgentsDue(world, candidate);
+      expect(new Set(due.map((agent) => agent.id)).size).toBe(due.length);
+      for (const agent of due) {
+        const ticks = decisions.get(agent.id) ?? [];
+        ticks.push(candidate);
+        decisions.set(agent.id, ticks);
+        const holdMacroturns = holds[(Number(agent.id.slice(1)) + ticks.length) % holds.length];
+        const goal = activities[ticks.length % activities.length]!;
+        expect(
+          applyDirective(
+            world,
+            agent.id,
+            { ...heldDirective, goal, holdMacroturns },
+            false,
+            candidate,
+          ),
+        ).toBe(true);
+      }
+      advanceWorld(world, 1);
+      for (const agent of world.agents)
+        if (
+          agent.nextDecisionTick <= world.tick ||
+          (agent.nextDecisionTick - agent.decisionPhase) % MODEL_MACROTURN_INTERVAL_TICKS !== 0
+        )
+          offPhase.push(`${agent.id}@T${world.tick}`);
+    }
+    expect(offPhase).toEqual([]);
+    let avoided = 0;
+    for (const ticks of decisions.values()) {
+      for (const [index, tick] of ticks.entries())
+        if (index) expect((tick - ticks[index - 1]!) % MODEL_MACROTURN_INTERVAL_TICKS).toBe(0);
+      avoided +=
+        Math.floor((world.tick - ticks[0]!) / MODEL_MACROTURN_INTERVAL_TICKS) + 1 - ticks.length;
+    }
+    expect(decisions.size).toBe(world.agents.length);
+    expect(world.llm.holdWakeUps).toBeGreaterThan(0);
+    expect(avoided).toBeGreaterThan(0);
+    expect(decisionHoldStats(world).decisionsAvoided).toBe(avoided);
+  }, 15_000);
 
   it("migrates existing worlds to persistent per-agent schedules without resetting activity", () => {
     const world = createInitialWorld(14, 0);
