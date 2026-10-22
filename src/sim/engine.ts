@@ -516,13 +516,19 @@ export function decisionAgentsDue(
 }
 
 // A wake-up only pulls a held decision back to the agent's next check tick after the current tick.
+// An agent gets at most one early wake per macroturn, so a lasting condition cannot call the model
+// at every check; a later wake waits until a macroturn has passed since the previous one.
 export function wakeHoldingAgent(
   state: WorldState,
   agent: Agent,
   interval = MODEL_MACROTURN_INTERVAL_TICKS,
 ): boolean {
+  const earliest =
+    agent.lastWakeTick === undefined
+      ? state.tick
+      : Math.max(state.tick, agent.lastWakeTick + interval - 1);
   const wakeTick = nextScheduledDecisionTick(
-    state.tick,
+    earliest,
     agent.decisionPhase,
     DECISION_CHECK_INTERVAL_TICKS,
   );
@@ -530,6 +536,7 @@ export function wakeHoldingAgent(
   state.llm.holdSkipsScheduled -= Math.floor((agent.nextDecisionTick - wakeTick) / interval);
   state.llm.holdWakeUps += 1;
   agent.nextDecisionTick = wakeTick;
+  agent.lastWakeTick = wakeTick;
   return true;
 }
 

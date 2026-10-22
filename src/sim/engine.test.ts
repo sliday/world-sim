@@ -1166,8 +1166,9 @@ describe("deterministic consequence layer", () => {
     const decisionTick = agent.nextDecisionTick;
     expect(applyDirective(world, agent.id, directive, false, decisionTick)).toBe(true);
     expect(agent.nextDecisionTick).toBe(decisionTick + 8 * MODEL_MACROTURN_INTERVAL_TICKS);
-    // Count only wake-ups after this hold starts.
+    // Count only wake-ups after this hold starts, and forget any wake during the lead-in.
     world.llm.holdWakeUps = 0;
+    delete agent.lastWakeTick;
     return { agent, decisionTick };
   }
 
@@ -1244,6 +1245,25 @@ describe("deterministic consequence layer", () => {
       );
     },
   );
+
+  it("defers a lasting condition's next wake to a full macroturn after the last one", () => {
+    const world = createInitialWorld(16, 0, "full-culture", 1);
+    const { agent, decisionTick } = holdFirstAgent(world);
+    agent.energy = 0.3;
+    agent.inventory.water = 0;
+    advanceWorld(world, 1);
+    const wakeTick = decisionTick + DECISION_CHECK_INTERVAL_TICKS;
+    expect(agent.nextDecisionTick).toBe(wakeTick);
+    while (world.tick < wakeTick - 1) advanceWorld(world, 1);
+    expect(agent.nextDecisionTick).toBe(wakeTick);
+    expect(applyDirective(world, agent.id, heldDirective, false, wakeTick)).toBe(true);
+    agent.energy = 0.3;
+    agent.inventory.water = 0;
+    advanceWorld(world, 30);
+    expect(agent.nextDecisionTick).toBe(wakeTick + MODEL_MACROTURN_INTERVAL_TICKS);
+    expect(decisionAgentsDue(world, wakeTick + DECISION_CHECK_INTERVAL_TICKS)).not.toContain(agent);
+    expect(world.llm.holdWakeUps).toBe(2);
+  });
 
   it("wakes a holding agent after its program fails for a full cycle", () => {
     const world = createInitialWorld(17, 0, "full-culture", 1);
@@ -1338,6 +1358,9 @@ describe("deterministic consequence layer", () => {
           ),
         ).toBe(true);
       }
+      // Even agents keep their reserves, so their holds skip slots; odd agents drain and wake.
+      for (const agent of world.agents)
+        if (Number(agent.id.slice(1)) % 2 === 0) agent.inventory.water = 3;
       advanceWorld(world, 1);
       for (const agent of world.agents)
         if (

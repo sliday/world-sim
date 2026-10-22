@@ -188,6 +188,8 @@ export interface Agent {
   lastDecisionTick: number;
   decisionPhase: number;
   nextDecisionTick: number;
+  /** Decision tick of the latest early wake-up; the next one waits a full macroturn. */
+  lastWakeTick?: number;
   scriptCursor: number;
   failedPrimitiveStreak?: number;
   trail: Vec2[];
