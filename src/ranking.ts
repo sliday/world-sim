@@ -476,7 +476,7 @@ function rowMarkup(agent: RankedAgent, report: HierarchyReport, maxPrestige: num
   const width = Math.max(2, Math.round((agent.prestige / maxPrestige) * 100));
   return `<tr class="${agent.rank === undefined ? "unranked" : ""}">
     <td class="rank">${agent.rank === undefined ? "—" : `#${agent.rank}`}</td>
-    <td><div class="bot"><span class="portrait" style="--bot-hue: ${agent.color}">${botPortraitSvg(`${report.seed}:${agent.id}`)}</span><span><strong>${escapeHtml(agent.name)}${agent.rank === 1 ? `<em class="king"><i class="hn hn-crown-solid" aria-hidden="true"></i>KING</em>` : ""}</strong><small>${escapeHtml(agent.id)}</small></span></div></td>
+    <td><div class="bot"><span class="portrait">${botPortraitSvg(`${report.seed}:${agent.id}`, false)}</span><span><strong>${escapeHtml(agent.name)}${agent.rank === 1 ? `<em class="king"><i class="hn hn-crown-solid" aria-hidden="true"></i>KING</em>` : ""}</strong><small>${escapeHtml(agent.id)}</small></span></div></td>
     <td><div class="prestige"><strong>${agent.prestige.toFixed(2)}</strong><span><i style="width: ${width}%"></i></span></div></td>
     <td><strong>${agent.received.deferrers}</strong> <small>BOTS · WEIGHT ${agent.received.weight}</small></td>
     <td class="why">${whyMarkup(agent)}</td>
