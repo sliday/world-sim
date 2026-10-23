@@ -111,9 +111,13 @@ function svgEyes(appearance: BotAppearance): string {
   return `<rect x="23" y="29" width="7" height="7" rx="2" fill="${color}"/><rect x="35" y="29" width="7" height="7" rx="2" fill="${color}"/><rect x="25" y="31" width="3" height="3" fill="${glow}"/><rect x="37" y="31" width="3" height="3" fill="${glow}"/>`;
 }
 
-export function botPortraitSvg(identity: string): string {
+export function botPortraitSvg(identity: string, framed = true): string {
   const appearance = generateBotAppearance(identity);
   const safeId = identityHash32(identity).toString(16);
   const podX = appearance.podSide < 0 ? 12 : 47;
-  return `<svg viewBox="0 0 64 64" role="img" aria-label="Unique generated robot portrait" shape-rendering="crispEdges"><defs><filter id="grain-${safeId}"><feTurbulence type="fractalNoise" baseFrequency=".12" numOctaves="2"/><feBlend in="SourceGraphic" mode="overlay"/></filter></defs><rect width="64" height="64" rx="9" fill="${appearance.shadow}"/><g filter="url(#grain-${safeId})" opacity=".18"><rect width="64" height="64" fill="#fff"/></g><g>${svgAntenna(appearance)}<rect x="${podX}" y="31" width="5" height="13" fill="${appearance.secondary}"/>${svgShell(appearance)}<rect x="25" y="40" width="14" height="5" fill="${appearance.secondary}" opacity=".75"/>${svgEyes(appearance)}<rect x="${appearance.podSide < 0 ? 21 : 39}" y="39" width="4" height="4" fill="${appearance.highlight}"/></g></svg>`;
+  // A frameless portrait drops the plate and grain and crops the view to the robot itself.
+  const frame = framed
+    ? `<defs><filter id="grain-${safeId}"><feTurbulence type="fractalNoise" baseFrequency=".12" numOctaves="2"/><feBlend in="SourceGraphic" mode="overlay"/></filter></defs><rect width="64" height="64" rx="9" fill="${appearance.shadow}"/><g filter="url(#grain-${safeId})" opacity=".18"><rect width="64" height="64" fill="#fff"/></g>`
+    : "";
+  return `<svg viewBox="${framed ? "0 0 64 64" : "9 7 46 46"}" role="img" aria-label="Unique generated robot portrait" shape-rendering="crispEdges">${frame}<g>${svgAntenna(appearance)}<rect x="${podX}" y="31" width="5" height="13" fill="${appearance.secondary}"/>${svgShell(appearance)}<rect x="25" y="40" width="14" height="5" fill="${appearance.secondary}" opacity=".75"/>${svgEyes(appearance)}<rect x="${appearance.podSide < 0 ? 21 : 39}" y="39" width="4" height="4" fill="${appearance.highlight}"/></g></svg>`;
 }

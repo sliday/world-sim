@@ -791,6 +791,10 @@ describe("deterministic consequence layer", () => {
     );
     expect(botPortraitSvg("260826081:A001")).not.toContain("<radialGradient");
     expect(botPortraitSvg("260826081:A001")).toContain("<feTurbulence");
+    const frameless = botPortraitSvg("260826081:A001", false);
+    expect(frameless).toContain('viewBox="9 7 46 46"');
+    expect(frameless).not.toContain("<feTurbulence");
+    expect(frameless).not.toContain('width="64"');
   });
 
   it("interpolates agent motion through the shortest toroidal path", () => {

@@ -496,16 +496,14 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-width: 170px;
+  min-width: 184px;
 }
 
 .ranking-table .portrait {
   display: block;
-  width: 34px;
-  height: 34px;
-  flex: 0 0 34px;
-  border: 1px solid hsl(var(--bot-hue) 60% 62% / 0.6);
-  background: #102022;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
 }
 
 .ranking-table .portrait svg {
