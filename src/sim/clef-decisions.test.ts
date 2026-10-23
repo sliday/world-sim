@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { requestClefDirective } from "./clef-decisions";
 import { createInitialWorld, decisionObservation } from "./engine";
+import { baseHarness, situationFeatures } from "./harness";
+import type { AgentHarness } from "./harness-types";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -388,4 +390,170 @@ describe("Clef agent decisions", () => {
       });
     },
   );
+});
+
+describe("Clef agent decisions under a harness", () => {
+  type Body = {
+    state: Record<string, unknown>;
+    questions: Record<string, { instructions: string; criteria: Record<string, string> }>;
+  };
+
+  /** Answers every open question, choosing `picks[id]` when given and the first label otherwise. */
+  function answering(bodies: Body[], picks: Record<string, string> = {}) {
+    return async (_url: string, init: RequestInit) => {
+      if (typeof init.body !== "string") throw new Error("Expected a JSON request body");
+      const body = JSON.parse(init.body) as Body;
+      bodies.push(body);
+      const answers = Object.fromEntries(
+        Object.entries(body.questions).map(([id, question]) => {
+          const labels = Object.keys(question.criteria);
+          const choice = picks[id] && labels.includes(picks[id]) ? picks[id] : labels[0]!;
+          return [
+            id,
+            {
+              type: "choice",
+              choice,
+              confidence: 1,
+              probabilities: Object.fromEntries(
+                labels.map((label) => [label, label === choice ? 1 : 0]),
+              ),
+            },
+          ];
+        }),
+      );
+      return Response.json({ model: "cloudflare/clef-flash", answers, usage: { cost: 0.00002 } });
+    };
+  }
+
+  function learnedWorld() {
+    const world = createInitialWorld(42);
+    const agent = world.agents[0]!;
+    world.actionLibrary.push({
+      id: "learned-water",
+      name: "Water search",
+      icon: "≈",
+      algorithm: "Seek water and gather it.",
+      program: ["seek-resource", "gather-local"],
+      authorId: agent.id,
+      createdTick: 0,
+      uses: 0,
+    });
+    agent.knownActionIds.push("learned-water");
+    return { world, agent, features: situationFeatures(world, agent) };
+  }
+
+  function adopted(changes: Partial<AgentHarness>): AgentHarness {
+    return { ...baseHarness(), revision: 1, origin: "adopted", ...changes };
+  }
+
+  it("applies procedure, guards, guidance, and memory to the request and skills to the directive", async () => {
+    const { world, agent, features } = learnedWorld();
+    const harness = adopted({
+      procedure: ["Refill water before energy falls below 0.3."],
+      guards: [
+        {
+          id: "no-inspect",
+          when: { all: [{ feature: "energy", op: ">=", value: 0 }] },
+          effect: { kind: "forbid", question: "goal", label: "inspect" },
+          note: "No inherited artifact lies in reach.",
+        },
+      ],
+      memory: [
+        {
+          id: "mineral-east",
+          kind: "resource",
+          text: "In this workspace mineral is viable at (20,2).",
+          x: 20,
+          y: 2,
+          material: "mineral",
+          verifiedTick: 0,
+        },
+      ],
+      guidance: [
+        {
+          id: "mineral-hint",
+          question: "targetMaterial",
+          label: "mineral",
+          text: "Mineral lies two tiles east of the foundry.",
+        },
+      ],
+      skills: [
+        {
+          id: "water-search",
+          when: { all: [] },
+          goal: "gather",
+          actionId: "learned-water",
+          note: "Use the learned water search when gathering.",
+        },
+      ],
+    });
+    const bodies: Body[] = [];
+    vi.stubGlobal("fetch", answering(bodies, { goal: "gather", actionId: "default" }));
+    const { directive } = await requestClefDirective("key", decisionObservation(world, agent), {
+      harness,
+      features,
+      knownActionIds: agent.knownActionIds,
+    });
+    const body = bodies[0]!;
+    expect(body.questions.goal!.instructions).toMatch(
+      / Harness procedure: Refill water before energy falls below 0\.3\.$/,
+    );
+    expect(Object.keys(body.questions.goal!.criteria)).toEqual([
+      "explore",
+      "gather",
+      "build",
+      "maintain",
+    ]);
+    expect(body.questions.targetMaterial!.criteria.mineral).toBe(
+      "Mineral lies two tiles east of the foundry.",
+    );
+    expect(body.state.harnessMemory).toEqual(["In this workspace mineral is viable at (20,2)."]);
+    expect(directive).toMatchObject({ goal: "gather", actionId: "learned-water", icon: undefined });
+  });
+
+  it("resolves a goal that a guard requires locally", async () => {
+    const { world, agent, features } = learnedWorld();
+    const harness = adopted({
+      guards: [
+        {
+          id: "explore-first",
+          when: { all: [{ feature: "energy", op: ">=", value: 0 }] },
+          effect: { kind: "require", question: "goal", label: "explore" },
+          note: "Nothing viable is mapped nearby.",
+        },
+      ],
+    });
+    const bodies: Body[] = [];
+    vi.stubGlobal("fetch", answering(bodies));
+    const { directive } = await requestClefDirective("key", decisionObservation(world, agent), {
+      harness,
+      features,
+      knownActionIds: agent.knownActionIds,
+    });
+    expect(bodies[0]!.questions.goal).toBeUndefined();
+    expect(directive.goal).toBe("explore");
+  });
+
+  it("leaves a guard inert while its condition fails", async () => {
+    const { world, agent, features } = learnedWorld();
+    const harness = adopted({
+      guards: [
+        {
+          id: "explore-when-drained",
+          when: { all: [{ feature: "energy", op: "<", value: 0 }] },
+          effect: { kind: "require", question: "goal", label: "explore" },
+          note: "Energy never falls below zero.",
+        },
+      ],
+    });
+    const bodies: Body[] = [];
+    vi.stubGlobal("fetch", answering(bodies));
+    await requestClefDirective("key", decisionObservation(world, agent), {
+      harness,
+      features,
+      knownActionIds: agent.knownActionIds,
+    });
+    await requestClefDirective("key", decisionObservation(world, agent));
+    expect(JSON.stringify(bodies[0])).toBe(JSON.stringify(bodies[1]));
+  });
 });

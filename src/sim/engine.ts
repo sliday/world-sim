@@ -583,7 +583,7 @@ function emptyMetrics(): WorldMetrics {
   };
 }
 
-function addEvent(
+export function addEvent(
   state: WorldState,
   kind: WorldEvent["kind"],
   text: string,
@@ -943,14 +943,14 @@ export function completeCrafting(agent: Agent, state: WorldState): boolean {
   return true;
 }
 
-function canBuild(agent: Agent): MaterialKind | undefined {
+export function canBuild(agent: Agent): MaterialKind | undefined {
   return materials
     .filter((material) => material !== "water")
     .sort((a, b) => agent.inventory[b] - agent.inventory[a])
     .find((material) => agent.inventory[material] >= 5 && agent.inventory.water >= 1.5);
 }
 
-function nearestProcessingStation(
+export function nearestProcessingStation(
   agent: Agent,
   state: WorldState,
   material: MaterialKind,

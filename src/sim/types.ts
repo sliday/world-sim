@@ -1,3 +1,5 @@
+import type { AgentHarness } from "./harness-types";
+
 export const WORLD_WIDTH = 96;
 export const WORLD_HEIGHT = 72;
 export const AGENT_COUNT = 100;
@@ -202,6 +204,8 @@ export interface Agent {
   skillLastUsedTick: Record<string, number>;
   lastSpeech?: string;
   heardMessages: HeardMessage[];
+  /** Harness² execution harness adopted in the agent's latest round; undefined means H0. */
+  harness?: AgentHarness;
 }
 
 export interface Artifact {

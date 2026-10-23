@@ -101,6 +101,47 @@ Migration starts each clock from recorded evidence. An artifact no agent ever to
 - Bots never see their rank. The hierarchy module feeds no observation, memory, or model prompt, and a test checks that measuring leaves the world unchanged.
 - Without the Worker, the page computes the current ranking from the local fallback simulation and marks history unavailable.
 
+## Harness² self-learning
+
+The Worker runs a version of Harness² (Xu et al., "Harness²: Recursive Agent Harnessing for an Open World", [arXiv 2610.14224](https://arxiv.org/abs/2610.14224)) on the routine Clef decision. An execution harness is a set of typed additions to one agent's request: procedure lines appended to the goal instructions, guards that remove or require an option while a condition on the agent's situation holds, verified workspace facts sent in the state as `harnessMemory`, replacement criteria text for one option, and skill triggers that swap a built-in activity for a learned action the agent knows. Every agent starts with H0, the empty harness. A decision under H0 sends the same bytes as before this feature; a test compares those requests with bodies recorded from the earlier code.
+
+An improvement round replaces one agent's routine Clef call for one macroturn:
+
+1. References. Clef answers the routine questions under H0, and the Worker draws k directives from its probabilities.
+2. Rollouts. The Worker clones the world at the decision tick and plays each directive forward for 120 ticks. A clone keeps the RNG state, terrain, and neighbours of the live world; only the harness differs, and the live world never changes.
+3. Editor. Deterministic diagnosers read the reference trajectories and propose INV edits (how the agent works: procedure, guards, skill triggers) and DOM edits (what it knows about this place: facts and option guidance). Each edit names the trajectory moment behind it, such as a primitive that failed on consecutive ticks or a viable tile the rollout walked past. Clef weighs the edits against keeping the current harness, one question per scope, and the Worker samples k candidates per scope from its probabilities.
+4. Probes. Each picked edit runs on a fresh clone with the references' random seed, so a probe's directive differs from the reference only when the edit moved Clef's probabilities.
+5. Composer. Clef marks each pooled edit kept or dropped. Code then drops any edit whose probe produced nothing while a reference delivered, resolves conflicts, and enforces the harness limits.
+6. Selection, when k > 1. Clef compares anonymized, shuffled outcome summaries of the references and successors and picks one to deliver. No harness, run id, score, or rubric reaches it.
+7. Reflector. Clef labels each edit helped, hurt, no observed effect, or confounded, and code overrides the label when no execution isolates the edit. An edit that helped or hurt can yield one lesson for the library; otherwise the round records NO_ENTRY.
+
+The selected directive goes through the same text generation and commit path as a routine directive. The agent keeps the adopted harness for its routine macroturns until its next round, and the world log gains a line such as "Ada refined its harness: add memory: ..." or "Ada kept its base harness". The SQLite table `harness_library` keeps up to 400 lessons and adopted harnesses per interaction condition. A round reads at most the three entries whose situation cue is closest to the agent's, and only entries whose cue shares at least half of the two cues' combined tokens (Jaccard similarity 0.5 or more). Under full culture it picks them from every agent's rows; under both ablations it picks them from the agent's own rows only, so the library opens no new culture channel there. `harness_rounds` keeps a compact record of the latest 200 rounds.
+
+This world adapts the paper in five ways:
+
+- Clef edits by choosing among typed edits that code built and validated, and it never writes harness text. A frozen 9B decision model answers choice questions; it does not author programs.
+- The harness has no C5 (subagents) and no C7 (scripts). One decision has one context, and a script minted by a harness would bypass the crafting and creative-session rules that make learned actions physical culture.
+- Rounds run only on open decisions. When the goal question keeps fewer than two options under H0, as in the emergency water refill, a crafting commitment, or a due creative session, a round cannot change the decision, so the scheduler skips that agent.
+- At most one round runs per `HARNESS_ROUND_INTERVAL_TICKS`. Among the due agents with an open decision, the Worker picks an agent that has never had a round first, then the one whose last round is oldest. The agents due at one tick share its phase modulo the 60-tick macroturn, so a 60-tick gap would return to the same one or two agents every round. The Worker stretches the gap to the next length that shares no factor with 60 (61 for the default), and successive rounds walk through every phase.
+- Every round starts from H0 and reads the library, as in the paper. A round that keeps the base harness resets the agent to H0.
+
+A failed round, retryable or not, sends the agent back to its routine decision in the same macroturn and records `lastRoundError`. A round never pauses world time by itself: a quota error ends the round, and only the routine fallback call can start the Clef cooldown. A round starts no new Clef call once 30 seconds have passed since it began: its next call ends the round with an error, and the routine decision runs instead, so a slow provider cannot hold the tick for a whole round of 12-second request timeouts.
+
+The defaults below come from `wrangler.jsonc`. In code, an unset `HARNESS_LEARNING` disables learning.
+
+| Variable                       | Default    | Meaning                                                                                                                                                   |
+| ------------------------------ | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `HARNESS_LEARNING`             | `true`     | `true` runs rounds and applies adopted harnesses. Any other value sends H0 requests and leaves stored harnesses unused.                                   |
+| `HARNESS_K`                    | `1`        | 1 to 5: candidates per scope and compositions in parallel mode, chained checkpoints in sequential mode. Values above 5 become 5; anything else becomes 1. |
+| `HARNESS_MODE`                 | `parallel` | `parallel` or `sequential`.                                                                                                                               |
+| `HARNESS_ROUND_INTERVAL_TICKS` | `60`       | Minimum ticks between rounds, raised to the next length coprime with 60; the default spaces rounds at least 61 ticks (about 10 minutes) apart.            |
+
+A parallel k = 1 round makes at most 7 Clef calls: the reference decision, the Editor, up to two probe decisions, the Composer, one successor decision, and the Reflector. A stage with nothing to decide skips its call, so stubbed rounds on the T400,389 snapshot made 4 and 6 calls. A sequential k = 5 round makes at most 28. Every call counts against `MAX_LLM_CALLS_PER_DAY` and adds its cost to `world.llm.totalCost`, and the Worker skips a round when fewer than 40 daily calls remain or while Clef or text generation is on cooldown. (A round that selects build or create needs text generation to commit its directive.) At about $0.00003 per decision, a k = 1 round costs about $0.0002, and one round every 61 ticks adds at most about 850 calls and $0.03 a day. With a stubbed transport, the two rounds on the live snapshot took 0.9 and 1.9 seconds in Node. A Durable Object alarm gets 30 seconds of CPU by default and `wrangler.jsonc` sets no `limits.cpu_ms`, so measure a live k = 1 round's CPU time on Workers before you raise `HARNESS_K`.
+
+`GET /api/harness` returns the settings, `nextRoundTick`, `roundsCompleted`, `lastRoundError`, library counts per condition with the 50 newest index rows, the last 20 rounds (tick, agent, cue, adopted run and components, verdict rows, lesson or NO_ENTRY, network requests charged to the daily cap, cost, fallbacks, and any error), and each agent that has had a round, with its origin (`base` for H0, `adopted` otherwise), revision, adoption tick, and component counts. `/api/health` carries a short `harness` block. The WebSocket snapshot omits harnesses.
+
+Local tests validate mechanics: H0 byte identity, harness application in the routine request, scheduling and budget rules, persistence shapes, and full rounds against a fetch stub that answers by label order. They do not show that harnesses improve decisions; that needs live rounds and a matched comparison against H0. On the T400,389 snapshot, 95 agents sit in the emergency water branch and 5 hold crafting commitments, so no agent has an open decision, and the scheduler would skip rounds until reserves recover.
+
 ## Local development
 
 ```bash
