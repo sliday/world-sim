@@ -172,12 +172,12 @@ describe("pickRoundAgent", () => {
 });
 
 describe("harnessConfig", () => {
-  it("defaults to learning off, k = 1, parallel, every 60 ticks", () => {
+  it("defaults to learning off, k = 1, parallel, every 600 ticks", () => {
     expect(harnessConfig({})).toEqual({
       enabled: false,
       k: 1,
       mode: "parallel",
-      intervalTicks: 60,
+      intervalTicks: 600,
     });
   });
 
@@ -187,9 +187,9 @@ describe("harnessConfig", () => {
         HARNESS_LEARNING: "true",
         HARNESS_K: "1",
         HARNESS_MODE: "parallel",
-        HARNESS_ROUND_INTERVAL_TICKS: "60",
+        HARNESS_ROUND_INTERVAL_TICKS: "600",
       }),
-    ).toEqual(parallelOne);
+    ).toEqual({ ...parallelOne, intervalTicks: 600 });
   });
 
   it.each([
@@ -219,8 +219,8 @@ describe("harnessConfig", () => {
 
   it("keeps the round interval a positive whole number of ticks", () => {
     expect(harnessConfig({ HARNESS_ROUND_INTERVAL_TICKS: "120" }).intervalTicks).toBe(120);
-    expect(harnessConfig({ HARNESS_ROUND_INTERVAL_TICKS: "0" }).intervalTicks).toBe(60);
-    expect(harnessConfig({ HARNESS_ROUND_INTERVAL_TICKS: "1e3" }).intervalTicks).toBe(60);
+    expect(harnessConfig({ HARNESS_ROUND_INTERVAL_TICKS: "0" }).intervalTicks).toBe(600);
+    expect(harnessConfig({ HARNESS_ROUND_INTERVAL_TICKS: "1e3" }).intervalTicks).toBe(600);
   });
 });
 

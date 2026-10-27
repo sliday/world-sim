@@ -32,7 +32,7 @@
     "HARNESS_LEARNING": "true",
     "HARNESS_K": "1",
     "HARNESS_MODE": "parallel",
-    "HARNESS_ROUND_INTERVAL_TICKS": "60",
+    "HARNESS_ROUND_INTERVAL_TICKS": "600",
   },
   "observability": {
     "enabled": true,

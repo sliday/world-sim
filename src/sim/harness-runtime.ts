@@ -227,7 +227,7 @@ export function harnessConfig(env: HarnessEnv): HarnessConfig {
     enabled: env.HARNESS_LEARNING?.trim() === "true",
     k: boundedInteger(env.HARNESS_K, 1, 1, 5),
     mode: env.HARNESS_MODE?.trim() === "sequential" ? "sequential" : "parallel",
-    intervalTicks: boundedInteger(env.HARNESS_ROUND_INTERVAL_TICKS, 60, 1, 1_000_000),
+    intervalTicks: boundedInteger(env.HARNESS_ROUND_INTERVAL_TICKS, 600, 1, 1_000_000),
   };
 }
 
@@ -262,7 +262,7 @@ function greatestCommonDivisor(a: number, b: number): number {
 /** The first tick the next round may run after a round at `tick`. The agents due at one tick
  * share its phase modulo the macroturn, so a gap that shares a factor with the macroturn would
  * keep returning to the same few agents. The gap grows from `intervalTicks` to the next length
- * coprime with the macroturn (61 for the default 60), and successive rounds walk every phase. */
+ * coprime with the macroturn (601 for the default 600), and successive rounds walk every phase. */
 export function nextRoundTickAfter(
   tick: number,
   intervalTicks: number,

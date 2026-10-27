@@ -1,6 +1,7 @@
 // Golden request bodies for routine Clef decisions. The snapshots under __snapshots__/clef-h0
-// were recorded from requestClefDirective before the harness refactor (commit d0168e2); a
-// decision without a harness, or under H0, must keep sending exactly these bytes.
+// were recorded from requestClefDirective before the harness refactor (commit d0168e2) and
+// re-recorded after #11 reworded the hold question for 600-tick macroturns; a decision without
+// a harness, or under H0, must keep sending exactly these bytes.
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { createClefClient } from "./clef-client";
 import { requestClefDirective } from "./clef-decisions";
