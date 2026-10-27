@@ -120,7 +120,7 @@ export function decisionRequest(observation: Record<string, unknown>): DecisionR
       },
     ),
     holdMacroturns: choice(
-      "Choose how many 60-tick macroturns the agent in state.agent keeps its next activity before its next AI reassessment. The simulator wakes it at its next macroturn when energy and water run low, its program stalls, or its crafting commitment ends.",
+      "Choose how many 600-tick macroturns the agent in state.agent keeps its next activity before its next AI reassessment. The simulator wakes it within 10 ticks when energy and water run low, its program stalls, or its crafting commitment ends.",
       // Low reserves wake a holding agent at once, so a longer hold would buy nothing.
       lowReserve
         ? { "1": "Reassess at the next macroturn while energy and water are low." }

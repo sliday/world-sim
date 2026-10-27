@@ -21,6 +21,7 @@ import {
   ensureAgentOperatingSystem,
   isArtifactContact,
   mechanismsForCondition,
+  DECISION_CHECK_INTERVAL_TICKS,
   MODEL_MACROTURN_INTERVAL_TICKS,
   nextScheduledDecisionTick,
   normalizeSpeech,
@@ -788,8 +789,12 @@ describe("deterministic consequence layer", () => {
     expect(generateBotAppearance("260826081:A001")).toEqual(
       generateBotAppearance("260826081:A001"),
     );
-    expect(botPortraitSvg("260826081:A001")).toContain("<radialGradient");
+    expect(botPortraitSvg("260826081:A001")).not.toContain("<radialGradient");
     expect(botPortraitSvg("260826081:A001")).toContain("<feTurbulence");
+    const frameless = botPortraitSvg("260826081:A001", false);
+    expect(frameless).toContain('viewBox="9 7 46 46"');
+    expect(frameless).not.toContain("<feTurbulence");
+    expect(frameless).not.toContain('width="64"');
   });
 
   it("interpolates agent motion through the shortest toroidal path", () => {
@@ -831,7 +836,12 @@ describe("deterministic consequence layer", () => {
     );
     expect(world.messages).toHaveLength(1);
     expect(world.messages[0]?.text).toBe("Fungus rich east come gather.");
-    expect(world.messages[0]?.deliverAtTick).toBe(recipient.nextDecisionTick);
+    const checkTick = nextScheduledDecisionTick(
+      world.tick,
+      recipient.decisionPhase,
+      DECISION_CHECK_INTERVAL_TICKS,
+    );
+    expect(world.messages[0]?.deliverAtTick).toBe(checkTick);
     expect(world.messages[0]?.deliveredTick).toBeUndefined();
     ensureAgentOperatingSystem(world);
     expect(world.messages[0]?.deliveredTick).toBeUndefined();
@@ -839,12 +849,12 @@ describe("deterministic consequence layer", () => {
     ensureAgentOperatingSystem(world);
     expect(world.messages[0]?.deliveredTick).toBeUndefined();
     expect(recipient.heardMessages).toHaveLength(0);
-    expect(deliverMessagesDue(world, recipient.id, recipient.nextDecisionTick - 1)).toBe(0);
+    expect(deliverMessagesDue(world, recipient.id, checkTick - 1)).toBe(0);
     expect(recipient.heardMessages).toHaveLength(0);
-    expect(deliverMessagesDue(world, recipient.id, recipient.nextDecisionTick)).toBe(1);
+    expect(deliverMessagesDue(world, recipient.id, checkTick)).toBe(1);
     expect(recipient.heardMessages[0]?.fromId).toBe(sender.id);
-    expect(world.messages[0]?.deliveredTick).toBe(recipient.nextDecisionTick);
-    expect(deliverMessagesDue(world, recipient.id, recipient.nextDecisionTick)).toBe(0);
+    expect(world.messages[0]?.deliveredTick).toBe(checkTick);
+    expect(deliverMessagesDue(world, recipient.id, checkTick)).toBe(0);
   });
 
   it("removes communication and the global skill library in the no-communication condition", () => {
@@ -1048,7 +1058,7 @@ describe("deterministic consequence layer", () => {
     expect(world.agents[0]?.directive.source).toBe("instinct");
   });
 
-  it("gives every agent one fixed staggered decision opportunity per 60 ticks", () => {
+  it("gives every agent one fixed staggered decision opportunity per macroturn", () => {
     const world = createInitialWorld(12, 0);
     const scheduled = Array.from({ length: MODEL_MACROTURN_INTERVAL_TICKS }, (_, index) =>
       decisionAgentsDue(world, index + 1),
@@ -1057,7 +1067,9 @@ describe("deterministic consequence layer", () => {
 
     expect(ids).toHaveLength(100);
     expect(new Set(ids).size).toBe(100);
-    expect(Math.max(...scheduled.map((agents) => agents.length))).toBe(2);
+    expect(Math.max(...scheduled.map((agents) => agents.length))).toBe(
+      Math.ceil(100 / MODEL_MACROTURN_INTERVAL_TICKS),
+    );
     for (const agent of world.agents) {
       expect(agent.decisionPhase).toBe(decisionPhaseForAgent(agent.id));
       expect(agent.nextDecisionTick).toBe(nextScheduledDecisionTick(0, agent.decisionPhase));
@@ -1151,12 +1163,16 @@ describe("deterministic consequence layer", () => {
 
   function holdFirstAgent(world: WorldState, directive = heldDirective) {
     const agent = world.agents[0]!;
-    advanceWorld(world, agent.nextDecisionTick - 1 - world.tick);
+    // A wake-up during the lead-in can move the agent's decision earlier.
+    while (world.tick < agent.nextDecisionTick - 1) advanceWorld(world, 1);
     agent.energy = 0.9;
     agent.inventory.water = 3;
     const decisionTick = agent.nextDecisionTick;
     expect(applyDirective(world, agent.id, directive, false, decisionTick)).toBe(true);
     expect(agent.nextDecisionTick).toBe(decisionTick + 8 * MODEL_MACROTURN_INTERVAL_TICKS);
+    // Count only wake-ups after this hold starts, and forget any wake during the lead-in.
+    world.llm.holdWakeUps = 0;
+    delete agent.lastWakeTick;
     return { agent, decisionTick };
   }
 
@@ -1202,7 +1218,7 @@ describe("deterministic consequence layer", () => {
   });
 
   it("keeps a hold while carried water still covers low energy", () => {
-    const world = createInitialWorld(16, 0);
+    const world = createInitialWorld(16, 0, "full-culture", 1);
     const { agent, decisionTick } = holdFirstAgent(world);
     agent.energy = 0.3;
     advanceWorld(world, 2);
@@ -1211,9 +1227,9 @@ describe("deterministic consequence layer", () => {
   });
 
   it.each(["low reserve", "reboot"] as const)(
-    "wakes a holding agent at its next phase after a %s",
+    "wakes a holding agent at its next check after a %s",
     (trigger) => {
-      const world = createInitialWorld(16, 0);
+      const world = createInitialWorld(16, 0, "full-culture", 1);
       const { agent, decisionTick } = holdFirstAgent(world);
       advanceWorld(world, 1);
       expect(agent.nextDecisionTick).toBe(decisionTick + 8 * MODEL_MACROTURN_INTERVAL_TICKS);
@@ -1221,21 +1237,40 @@ describe("deterministic consequence layer", () => {
       agent.inventory.water = trigger === "reboot" ? 0 : 1;
       advanceWorld(world, 1);
       if (trigger === "reboot") expect(world.events[0]?.text).toContain("rebooted");
-      expect(agent.nextDecisionTick).toBe(decisionTick + MODEL_MACROTURN_INTERVAL_TICKS);
+      expect(agent.nextDecisionTick).toBe(decisionTick + DECISION_CHECK_INTERVAL_TICKS);
       expect(agent.nextDecisionTick).toBe(
-        nextScheduledDecisionTick(world.tick, agent.decisionPhase),
+        nextScheduledDecisionTick(world.tick, agent.decisionPhase, DECISION_CHECK_INTERVAL_TICKS),
       );
       expect(world.llm).toMatchObject({ holdWakeUps: 1, holdSkipsScheduled: 0 });
       advanceWorld(world, 3);
       expect(world.llm.holdWakeUps).toBe(1);
-      expect(decisionAgentsDue(world, decisionTick + MODEL_MACROTURN_INTERVAL_TICKS)).toContain(
+      expect(decisionAgentsDue(world, decisionTick + DECISION_CHECK_INTERVAL_TICKS)).toContain(
         agent,
       );
     },
   );
 
+  it("defers a lasting condition's next wake to a full macroturn after the last one", () => {
+    const world = createInitialWorld(16, 0, "full-culture", 1);
+    const { agent, decisionTick } = holdFirstAgent(world);
+    agent.energy = 0.3;
+    agent.inventory.water = 0;
+    advanceWorld(world, 1);
+    const wakeTick = decisionTick + DECISION_CHECK_INTERVAL_TICKS;
+    expect(agent.nextDecisionTick).toBe(wakeTick);
+    while (world.tick < wakeTick - 1) advanceWorld(world, 1);
+    expect(agent.nextDecisionTick).toBe(wakeTick);
+    expect(applyDirective(world, agent.id, heldDirective, false, wakeTick)).toBe(true);
+    agent.energy = 0.3;
+    agent.inventory.water = 0;
+    advanceWorld(world, 30);
+    expect(agent.nextDecisionTick).toBe(wakeTick + MODEL_MACROTURN_INTERVAL_TICKS);
+    expect(decisionAgentsDue(world, wakeTick + DECISION_CHECK_INTERVAL_TICKS)).not.toContain(agent);
+    expect(world.llm.holdWakeUps).toBe(2);
+  });
+
   it("wakes a holding agent after its program fails for a full cycle", () => {
-    const world = createInitialWorld(17, 0);
+    const world = createInitialWorld(17, 0, "full-culture", 1);
     world.artifacts = [];
     const { agent, decisionTick } = holdFirstAgent(world);
     agent.script.program = ["inspect-local", "repair-local"];
@@ -1243,14 +1278,14 @@ describe("deterministic consequence layer", () => {
     expect(agent.failedPrimitiveStreak).toBe(1);
     expect(agent.nextDecisionTick).toBe(decisionTick + 8 * MODEL_MACROTURN_INTERVAL_TICKS);
     advanceWorld(world, 1);
-    expect(agent.nextDecisionTick).toBe(decisionTick + MODEL_MACROTURN_INTERVAL_TICKS);
+    expect(agent.nextDecisionTick).toBe(decisionTick + DECISION_CHECK_INTERVAL_TICKS);
     expect(world.llm.holdWakeUps).toBe(1);
   });
 
   it.each(["completes", "fails"] as const)(
     "wakes a holding agent when its crafting commitment %s",
     (outcome) => {
-      const world = createInitialWorld(18, 0);
+      const world = createInitialWorld(18, 0, "full-culture", 1);
       world.actionLibrary.push({
         id: "woven-filter",
         name: "Woven filter",
@@ -1278,7 +1313,7 @@ describe("deterministic consequence layer", () => {
       advanceWorld(world, 1);
       expect(agent.craftingTarget).toBeUndefined();
       expect(agent.crafts).toBe(outcome === "completes" ? 1 : 0);
-      expect(agent.nextDecisionTick).toBe(decisionTick + MODEL_MACROTURN_INTERVAL_TICKS);
+      expect(agent.nextDecisionTick).toBe(decisionTick + DECISION_CHECK_INTERVAL_TICKS);
       expect(world.llm.holdWakeUps).toBe(1);
     },
   );
@@ -1294,11 +1329,15 @@ describe("deterministic consequence layer", () => {
     recipient.energy = 0.3;
     recipient.inventory.water = 0;
     advanceWorld(world, 1);
-    expect(recipient.nextDecisionTick).toBe(decisionTick + MODEL_MACROTURN_INTERVAL_TICKS);
-    expect(deliverMessagesDue(world, recipient.id, recipient.nextDecisionTick)).toBe(1);
+    expect(recipient.nextDecisionTick).toBe(decisionTick + DECISION_CHECK_INTERVAL_TICKS);
+    // Ambient speech from the lead-in may arrive too; the sender's sentence must be among it.
+    expect(deliverMessagesDue(world, recipient.id, recipient.nextDecisionTick)).toBeGreaterThan(0);
+    expect(recipient.heardMessages).toContainEqual(
+      expect.objectContaining({ fromId: sender.id, text: "Mineral east here." }),
+    );
   });
 
-  it("keeps held and woken decisions on fixed phases and counts avoided decisions", () => {
+  it("keeps held and woken decisions on each agent's check grid and counts avoided decisions", () => {
     const world = createInitialWorld(20, 0);
     const holds = [1, 2, 4, 8] as const;
     const activities = ["gather", "explore", "build", "inspect", "maintain"] as const;
@@ -1323,21 +1362,28 @@ describe("deterministic consequence layer", () => {
           ),
         ).toBe(true);
       }
+      // Even agents keep their reserves, so their holds skip slots; odd agents drain and wake.
+      for (const agent of world.agents)
+        if (Number(agent.id.slice(1)) % 2 === 0) agent.inventory.water = 3;
       advanceWorld(world, 1);
       for (const agent of world.agents)
         if (
           agent.nextDecisionTick <= world.tick ||
-          (agent.nextDecisionTick - agent.decisionPhase) % MODEL_MACROTURN_INTERVAL_TICKS !== 0
+          (agent.nextDecisionTick - agent.decisionPhase) % DECISION_CHECK_INTERVAL_TICKS !== 0
         )
           offPhase.push(`${agent.id}@T${world.tick}`);
     }
     expect(offPhase).toEqual([]);
+    // Each hold avoids the macroturn slots that passed before the agent's next actual decision.
     let avoided = 0;
     for (const ticks of decisions.values()) {
-      for (const [index, tick] of ticks.entries())
-        if (index) expect((tick - ticks[index - 1]!) % MODEL_MACROTURN_INTERVAL_TICKS).toBe(0);
-      avoided +=
-        Math.floor((world.tick - ticks[0]!) / MODEL_MACROTURN_INTERVAL_TICKS) + 1 - ticks.length;
+      for (const [index, tick] of ticks.entries()) {
+        if (!index) continue;
+        const gap = tick - ticks[index - 1]!;
+        expect(gap % DECISION_CHECK_INTERVAL_TICKS).toBe(0);
+        avoided += Math.floor((gap - 1) / MODEL_MACROTURN_INTERVAL_TICKS);
+      }
+      avoided += Math.floor((world.tick - ticks.at(-1)!) / MODEL_MACROTURN_INTERVAL_TICKS);
     }
     expect(decisions.size).toBe(world.agents.length);
     expect(world.llm.holdWakeUps).toBeGreaterThan(0);

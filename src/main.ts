@@ -153,7 +153,7 @@ app.innerHTML = `
     <article class="about-content">
       <p class="eyebrow">AN AUTONOMOUS PLANET · NO PLAYERS · NO ASSIGNED ROLES</p>
       <h1>THEY DON’T NEED TO<br>UNDERSTAND EACH OTHER.<br><em>THE WORLD REMEMBERS.</em></h1>
-      <p class="lede">One hundred policy-equivalent little scientists inhabit a persistent planet. Nobody tells them who should explore, who should build, or what to invent. Every ten seconds, each executes a bounded local decision while staggered model macroturns revise plans. Each carries a small soul, user contract, executable action script, and a durable episodic log capped near 250,000 tokens.</p>
+      <p class="lede">One hundred policy-equivalent little scientists inhabit a persistent planet. Nobody tells them who should explore, who should build, or what to invent. Every second, each executes a bounded local decision while staggered model macroturns revise plans. Each carries a small soul, user contract, executable action script, and a durable episodic log capped near 250,000 tokens.</p>
 
       <div class="explain-grid">
         <section><span>01</span><i class="hn hn-location-pin"></i><h2>THEY WANDER</h2><p>Agents see only their local patch. Nearby bots trade one short telegraphic sentence; heard facts enter memory.</p></section>

@@ -25,7 +25,7 @@
   ],
   "vars": {
     "WORLD_SEED": "260826081",
-    "ALARM_INTERVAL_MS": "10000",
+    "ALARM_INTERVAL_MS": "1000",
     "LLM_ENABLED": "true",
     "LLM_PARALLELISM": "6",
     "MAX_LLM_CALLS_PER_DAY": "144024",
