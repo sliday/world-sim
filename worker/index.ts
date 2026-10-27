@@ -1064,7 +1064,6 @@ export class WorldRoom extends DurableObject<Env> {
   ): Promise<HarnessRoundOutcome> {
     const roundId = harnessRoundId(decisionTick, agentId);
     const usage = { calls: 0, cost: 0 };
-    const transport = createClefClient(this.env.OPENROUTER_API_KEY!);
     const deadline = Date.now() + ROUND_DEADLINE_MS;
     // Each stage and decision request counts against the daily cap like a routine call. A
     // retryable error ends the round, so the cap, a cooldown, the deadline, or a quota error
@@ -1072,7 +1071,9 @@ export class WorldRoom extends DurableObject<Env> {
     // call succeeds, the round's error never pauses world time.
     const clef: ClefClient = {
       decide: async (requestState, questions) => {
-        if (Date.now() > deadline)
+        // A call may not outlive the deadline, so a round holds the tick at most about 30 s.
+        const remainingMs = deadline - Date.now();
+        if (remainingMs < 1_000)
           throw new ClefDecisionError(
             `Harness round passed its ${ROUND_DEADLINE_MS / 1000}-second deadline`,
             true,
@@ -1085,6 +1086,11 @@ export class WorldRoom extends DurableObject<Env> {
         world.llm.totalCalls += 1;
         usage.calls += 1;
         try {
+          const transport = createClefClient(
+            this.env.OPENROUTER_API_KEY!,
+            fetch,
+            Math.min(12_000, remainingMs),
+          );
           const response = await transport.decide(requestState, questions);
           world.llm.totalCost += response.cost;
           usage.cost += response.cost;
