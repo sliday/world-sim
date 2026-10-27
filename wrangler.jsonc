@@ -29,6 +29,10 @@
     "LLM_ENABLED": "true",
     "LLM_PARALLELISM": "6",
     "MAX_LLM_CALLS_PER_DAY": "144024",
+    "HARNESS_LEARNING": "true",
+    "HARNESS_K": "1",
+    "HARNESS_MODE": "parallel",
+    "HARNESS_ROUND_INTERVAL_TICKS": "600",
   },
   "observability": {
     "enabled": true,

@@ -3,6 +3,7 @@ import agentCore from "./nullclaw/agent_core.wasm";
 import { generateAgentName } from "../src/sim/names";
 import { withTickRate } from "../src/sim/tick-age";
 import {
+  addEvent,
   advanceWorld,
   applyDirective,
   calculateMetrics,
@@ -41,8 +42,43 @@ import { encodeSnapshotFrame, type SentTerrain } from "../src/sim/snapshot-strea
 import type { HierarchyApiResponse } from "../src/sim/hierarchy";
 import { HierarchyHistoryStore } from "./hierarchy-history";
 import { ARTIFACT_DECAY_WINDOW_TICKS, SKILL_FORGETTING_WINDOW_TICKS } from "../src/sim/pruning";
-import { CLEF_MODEL, ClefDecisionError, requestClefDirective } from "../src/sim/clef-decisions";
+import {
+  CLEF_MODEL,
+  ClefDecisionError,
+  prepareClefDecision,
+  requestClefDirective,
+  type ClefHarnessOptions,
+} from "../src/sim/clef-decisions";
+import { createClefClient } from "../src/sim/clef-client";
+import { baseHarness, situationFeatures } from "../src/sim/harness";
+import { runImprovementRound } from "../src/sim/harness-improver";
+import { boundLibrary, libraryIndex } from "../src/sim/harness-library";
+import {
+  adoptedAgentHarness,
+  createRoundDeps,
+  decisionIsOpen,
+  failedHarnessRoundRow,
+  harnessComponentCounts,
+  harnessConfig,
+  harnessEventText,
+  harnessRoundId,
+  harnessRoundRow,
+  nextRoundTickAfter,
+  pickRoundAgent,
+  ROUND_DEADLINE_MS,
+  roundSeed,
+  roundSkipReason,
+  type HarnessConfig,
+  type HarnessRoundRow,
+} from "../src/sim/harness-runtime";
 import type {
+  ClefClient,
+  HarnessComponent,
+  LibraryEntry,
+  RoundResult,
+} from "../src/sim/harness-types";
+import type {
+  Agent,
   AgentActionProposal,
   AgentDirective,
   ArtifactSpecification,
@@ -63,9 +99,14 @@ interface Env {
   MAX_LLM_CALLS_PER_DAY: string;
   WORLD_SEED: string;
   ALARM_INTERVAL_MS: string;
+  HARNESS_LEARNING?: string;
+  HARNESS_K?: string;
+  HARNESS_MODE?: string;
+  HARNESS_ROUND_INTERVAL_TICKS?: string;
 }
 
 const OPENROUTER_FREE_MODEL = "openrouter/free";
+const HARNESS_ROUND_ROWS = 200;
 
 interface OpenRouterResponse {
   model?: string;
@@ -165,6 +206,66 @@ interface DiaryEventCountRow {
   [key: string]: SqlStorageValue;
   kind: string;
   count: number;
+}
+
+interface HarnessStateRow {
+  [key: string]: SqlStorageValue;
+  nextRoundTick: number;
+  roundsCompleted: number;
+  lastRoundError: string;
+}
+
+interface JsonRow {
+  [key: string]: SqlStorageValue;
+  json: string;
+}
+
+interface HarnessCountRow {
+  [key: string]: SqlStorageValue;
+  condition: string;
+  count: number;
+}
+
+interface HarnessReport extends HarnessConfig {
+  interactionCondition: string;
+  sharedLibrary: boolean;
+  nextRoundTick: number;
+  roundsCompleted: number;
+  lastRoundError?: string;
+  library: {
+    counts: Record<string, number>;
+    latest: Array<{
+      id: string;
+      cue: string;
+      lesson?: string;
+      confidence?: string;
+      condition: string;
+      visibility: string;
+      agentId: string;
+      createdTick: number;
+    }>;
+  };
+  rounds: HarnessRoundRow[];
+  agents: Array<{
+    id: string;
+    name: string;
+    revision: number;
+    origin: string;
+    roundId?: string;
+    adoptedTick?: number;
+    components: Record<HarnessComponent, number>;
+  }>;
+}
+
+/** One Harness² round as the Worker ran it: the result, or the error that sent the agent back
+ * to its routine decision. Calls and cost count the Clef requests the round sent. */
+interface HarnessRoundOutcome {
+  roundId: string;
+  cue: string;
+  calls: number;
+  cost: number;
+  result?: RoundResult;
+  error?: string;
 }
 
 interface PolicyExports extends WebAssembly.Exports {
@@ -361,6 +462,26 @@ export class WorldRoom extends DurableObject<Env> {
           next_tick INTEGER NOT NULL,
           baseline_json TEXT NOT NULL,
           last_error TEXT NOT NULL DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS harness_library (
+          id TEXT PRIMARY KEY,
+          interaction_condition TEXT NOT NULL,
+          created_tick INTEGER NOT NULL,
+          entry_json TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS harness_library_condition_tick
+          ON harness_library(interaction_condition, created_tick);
+        CREATE TABLE IF NOT EXISTS harness_rounds (
+          seq INTEGER PRIMARY KEY AUTOINCREMENT,
+          tick INTEGER NOT NULL,
+          agent_id TEXT NOT NULL,
+          record_json TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS harness_state (
+          singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+          next_round_tick INTEGER NOT NULL,
+          rounds_completed INTEGER NOT NULL DEFAULT 0,
+          last_round_error TEXT NOT NULL DEFAULT ''
         );
       `);
       const memoryColumns = new Set(
@@ -671,6 +792,8 @@ export class WorldRoom extends DurableObject<Env> {
   private publicSnapshot(world: WorldState): ReturnType<typeof publicSnapshot> {
     const snapshot = publicSnapshot(world, openRouterEnabled(this.env), CLEF_MODEL);
     snapshot.diary = this.readWorldDiary(12);
+    // /api/harness serves harnesses; the per-tick broadcast keeps its size.
+    for (const agent of snapshot.agents) delete agent.harness;
     return snapshot;
   }
 
@@ -752,7 +875,324 @@ export class WorldRoom extends DurableObject<Env> {
       nextWorldDiaryTick: diaryState.nextTick,
       worldDiaryLastError: diaryState.lastError || undefined,
       heldOutAssayEndpoint: "/api/held-out-assay",
+      harness: this.harnessHealth(world),
     };
+  }
+
+  private harnessHealth(world: WorldState): Record<string, unknown> {
+    const config = harnessConfig(this.env);
+    const state = this.ensureHarnessState(world);
+    return {
+      ...config,
+      nextRoundTick: state.nextRoundTick,
+      roundsCompleted: state.roundsCompleted,
+      lastRoundError: state.lastRoundError || undefined,
+      libraryEntries: this.ctx.storage.sql
+        .exec<{ [key: string]: SqlStorageValue; count: number }>(
+          "SELECT COUNT(*) AS count FROM harness_library",
+        )
+        .one().count,
+      agentsWithHarness: world.agents.filter((agent) => agent.harness).length,
+      endpoint: "/api/harness",
+    };
+  }
+
+  async harnessReport(): Promise<HarnessReport> {
+    const world = await this.load();
+    const config = harnessConfig(this.env);
+    const state = this.ensureHarnessState(world);
+    const counts = this.ctx.storage.sql
+      .exec<HarnessCountRow>(
+        `SELECT interaction_condition AS condition, COUNT(*) AS count
+         FROM harness_library GROUP BY interaction_condition`,
+      )
+      .toArray();
+    const latest = parseJsonRows<LibraryEntry>(
+      this.ctx.storage.sql
+        .exec<JsonRow>(
+          `SELECT entry_json AS json FROM harness_library
+           ORDER BY created_tick DESC, id DESC LIMIT 50`,
+        )
+        .toArray(),
+    ).map((entry) => ({
+      ...libraryIndex([entry])[0],
+      condition: entry.condition,
+      visibility: entry.visibility,
+      agentId: entry.agentId,
+      createdTick: entry.createdTick,
+    }));
+    const rounds = parseJsonRows<HarnessRoundRow>(
+      this.ctx.storage.sql
+        .exec<JsonRow>("SELECT record_json AS json FROM harness_rounds ORDER BY seq DESC LIMIT 20")
+        .toArray(),
+    );
+    return {
+      ...config,
+      interactionCondition: world.interactionCondition,
+      sharedLibrary: mechanismsForCondition(world.interactionCondition).skillLibrary,
+      nextRoundTick: state.nextRoundTick,
+      roundsCompleted: state.roundsCompleted,
+      lastRoundError: state.lastRoundError || undefined,
+      library: {
+        counts: Object.fromEntries(counts.map((row) => [row.condition, row.count])),
+        latest,
+      },
+      rounds,
+      agents: world.agents.flatMap(({ id, name, harness }) =>
+        harness
+          ? [
+              {
+                id,
+                name,
+                revision: harness.revision,
+                origin: harness.origin,
+                roundId: harness.roundId,
+                adoptedTick: harness.adoptedTick,
+                components: harnessComponentCounts(harness),
+              },
+            ]
+          : [],
+      ),
+    };
+  }
+
+  private ensureHarnessState(world: WorldState): HarnessStateRow {
+    const existing = this.ctx.storage.sql
+      .exec<HarnessStateRow>(
+        `SELECT next_round_tick AS nextRoundTick, rounds_completed AS roundsCompleted,
+                last_round_error AS lastRoundError
+         FROM harness_state WHERE singleton = 1`,
+      )
+      .toArray()[0];
+    if (existing) return existing;
+    const nextRoundTick = world.tick + 1;
+    this.ctx.storage.sql.exec(
+      `INSERT INTO harness_state (singleton, next_round_tick, rounds_completed, last_round_error)
+       VALUES (1, ?, 0, '')`,
+      nextRoundTick,
+    );
+    return { nextRoundTick, roundsCompleted: 0, lastRoundError: "" };
+  }
+
+  private readHarnessLibrary(condition: string): LibraryEntry[] {
+    return parseJsonRows<LibraryEntry>(
+      this.ctx.storage.sql
+        .exec<JsonRow>(
+          `SELECT entry_json AS json FROM harness_library
+           WHERE interaction_condition = ? ORDER BY created_tick, id`,
+          condition,
+        )
+        .toArray(),
+    );
+  }
+
+  private storeHarnessEntry(entry: LibraryEntry): void {
+    this.ctx.storage.sql.exec(
+      `INSERT OR REPLACE INTO harness_library
+        (id, interaction_condition, created_tick, entry_json)
+       VALUES (?, ?, ?, ?)`,
+      entry.id,
+      entry.condition,
+      entry.createdTick,
+      JSON.stringify(entry),
+    );
+    const entries = this.readHarnessLibrary(entry.condition);
+    const kept = new Set(boundLibrary(entries).map((row) => row.id));
+    for (const row of entries)
+      if (!kept.has(row.id))
+        this.ctx.storage.sql.exec("DELETE FROM harness_library WHERE id = ?", row.id);
+  }
+
+  private storeHarnessRound(row: HarnessRoundRow): void {
+    this.ctx.storage.sql.exec(
+      "INSERT INTO harness_rounds (tick, agent_id, record_json) VALUES (?, ?, ?)",
+      row.tick,
+      row.agentId,
+      JSON.stringify(row),
+    );
+    this.ctx.storage.sql.exec(
+      "DELETE FROM harness_rounds WHERE seq <= (SELECT MAX(seq) FROM harness_rounds) - ?",
+      HARNESS_ROUND_ROWS,
+    );
+  }
+
+  /** Picks the agent for a due, affordable round and moves the scheduler one interval on. */
+  private harnessRoundAgent(
+    world: WorldState,
+    agents: Agent[],
+    candidateTick: number,
+    config: HarnessConfig,
+    dailyLimit: number,
+  ): string | undefined {
+    if (!config.enabled) return undefined;
+    const state = this.ensureHarnessState(world);
+    const skip = roundSkipReason({
+      config,
+      tick: candidateTick,
+      nextRoundTick: state.nextRoundTick,
+      callsToday: world.llm.callsToday,
+      dailyLimit,
+      decisionBlockedUntil: world.llm.decisionBlockedUntil,
+      generationBlockedUntil: world.llm.generationBlockedUntil,
+      now: Date.now(),
+    });
+    if (skip) return undefined;
+    // Rounds start from H0, so openness is judged on the routine question set.
+    const agent = pickRoundAgent(agents, (candidate) =>
+      decisionIsOpen({
+        ...decisionObservation(world, candidate),
+        scheduledDecisionTick: candidateTick,
+      }),
+    );
+    if (!agent) return undefined;
+    this.ctx.storage.sql.exec(
+      "UPDATE harness_state SET next_round_tick = ? WHERE singleton = 1",
+      nextRoundTickAfter(candidateTick, config.intervalTicks),
+    );
+    return agent.id;
+  }
+
+  /** Runs one Harness² round for a due agent. It never throws: a failure comes back as an
+   * error, and the caller makes the routine decision instead. */
+  private async runHarnessRound(
+    world: WorldState,
+    agentId: string,
+    decisionTick: number,
+    state: Record<string, unknown>,
+    config: HarnessConfig,
+    dailyLimit: number,
+  ): Promise<HarnessRoundOutcome> {
+    const roundId = harnessRoundId(decisionTick, agentId);
+    const usage = { calls: 0, cost: 0 };
+    const deadline = Date.now() + ROUND_DEADLINE_MS;
+    // Each stage and decision request counts against the daily cap like a routine call. A
+    // retryable error ends the round, so the cap, a cooldown, the deadline, or a quota error
+    // aborts it at once. A quota error leaves the cooldown to the routine fallback: if that
+    // call succeeds, the round's error never pauses world time.
+    const clef: ClefClient = {
+      decide: async (requestState, questions) => {
+        // A call may not outlive the deadline, so a round holds the tick at most about 30 s.
+        const remainingMs = deadline - Date.now();
+        if (remainingMs < 1_000)
+          throw new ClefDecisionError(
+            `Harness round passed its ${ROUND_DEADLINE_MS / 1000}-second deadline`,
+            true,
+          );
+        if ((world.llm.decisionBlockedUntil ?? 0) > Date.now())
+          throw new ClefDecisionError("Clef decisions are on cooldown", true);
+        if (world.llm.callsToday >= dailyLimit)
+          throw new ClefDecisionError("Daily model limit reached", true);
+        world.llm.callsToday += 1;
+        world.llm.totalCalls += 1;
+        usage.calls += 1;
+        try {
+          const transport = createClefClient(
+            this.env.OPENROUTER_API_KEY!,
+            fetch,
+            Math.min(12_000, remainingMs),
+          );
+          const response = await transport.decide(requestState, questions);
+          world.llm.totalCost += response.cost;
+          usage.cost += response.cost;
+          return response;
+        } catch (error) {
+          if (error instanceof ClefDecisionError && (error.status === 402 || error.status === 429))
+            throw new ClefDecisionError(error.message, true, error.status, error.retryAfterMs);
+          throw error;
+        }
+      },
+    };
+    let cue = "";
+    try {
+      const wired = createRoundDeps({
+        world,
+        agentId,
+        decisionTick,
+        clef,
+        observation: state,
+        library: this.readHarnessLibrary(world.interactionCondition),
+      });
+      cue = wired.cue;
+      const result = await runImprovementRound(
+        {
+          roundId,
+          agentId,
+          tick: decisionTick,
+          condition: world.interactionCondition,
+          mode: config.mode,
+          k: config.k,
+          base: baseHarness(),
+          seed: roundSeed(world.seed, agentId, decisionTick),
+        },
+        wired.deps,
+      );
+      return { roundId, cue, calls: usage.calls, cost: usage.cost, result };
+    } catch (error) {
+      console.error("harness round failed", error);
+      return {
+        roundId,
+        cue,
+        calls: usage.calls,
+        cost: usage.cost,
+        error: error instanceof Error ? error.message : "harness round failed",
+      };
+    }
+  }
+
+  /** Adopts a round's harness for the agent's routine macroturns, or records why it failed. */
+  private recordHarnessRound(
+    world: WorldState,
+    agentId: string,
+    tick: number,
+    round: HarnessRoundOutcome,
+    config: HarnessConfig,
+  ): void {
+    const agent = world.agents.find((candidate) => candidate.id === agentId);
+    if (!agent) return;
+    if (round.result) {
+      agent.harness = adoptedAgentHarness(agent.harness, round.result, tick);
+      addEvent(
+        world,
+        "decision",
+        harnessEventText(agent.name, round.result),
+        agent.x,
+        agent.y,
+        tick,
+      );
+    }
+    try {
+      if (round.result?.entry) this.storeHarnessEntry(round.result.entry);
+      this.storeHarnessRound(
+        round.result
+          ? // Report the requests charged to the daily cap. record.calls also counts decide()
+            // calls that the harness answered in full without sending a request.
+            { ...harnessRoundRow(round.result, agent.name, config), calls: round.calls }
+          : failedHarnessRoundRow({
+              roundId: round.roundId,
+              tick,
+              agentId,
+              agentName: agent.name,
+              cue: round.cue,
+              config,
+              calls: round.calls,
+              cost: round.cost,
+              error: round.error ?? "harness round failed",
+            }),
+      );
+      if (round.result)
+        this.ctx.storage.sql.exec(
+          `UPDATE harness_state SET rounds_completed = rounds_completed + 1, last_round_error = ''
+           WHERE singleton = 1`,
+        );
+      else
+        this.ctx.storage.sql.exec(
+          "UPDATE harness_state SET last_round_error = ? WHERE singleton = 1",
+          (round.error ?? "harness round failed").replace(/\s+/g, " ").trim().slice(0, 160),
+        );
+    } catch (error) {
+      // The library and round log are records; failing to write them must not stop world time.
+      console.error("harness round persistence failed", error);
+    }
   }
 
   async heldOutAssay(): Promise<ReturnType<typeof runHeldOutAssay>> {
@@ -891,6 +1331,8 @@ export class WorldRoom extends DurableObject<Env> {
     const parallelism = Math.min(positiveInteger(this.env.LLM_PARALLELISM, 6, 6), remaining);
     const agents = dueAgents.slice(0, parallelism);
     for (const agent of agents) deliverMessagesDue(world, agent.id, candidateTick);
+    const learning = harnessConfig(this.env);
+    const roundAgentId = this.harnessRoundAgent(world, agents, candidateTick, learning, dailyLimit);
     const policyCore = this.nullclawPolicy();
     const outcomes = await Promise.all(
       agents.map(async (agent) => {
@@ -910,10 +1352,45 @@ export class WorldRoom extends DurableObject<Env> {
             world.metrics.forkDepth,
           ) ?? 0;
         const policyLabel = policy === 2 ? "urgent" : policy === 1 ? "detailed" : "concise";
+        // With learning off the stored harness stays inert, and requests are exactly H0's.
+        const clefOptions: ClefHarnessOptions | undefined =
+          learning.enabled && agent.harness
+            ? {
+                harness: agent.harness,
+                features: situationFeatures(world, agent),
+                knownActionIds: [...agent.knownActionIds],
+              }
+            : undefined;
+        // A Harness² round replaces this agent's routine Clef call. When the round fails, the
+        // routine decision runs in the same macroturn.
+        const round =
+          agent.id === roundAgentId
+            ? await this.runHarnessRound(
+                world,
+                agent.id,
+                candidateTick,
+                { ...JSON.parse(serialized), nullclawPolicy: policyLabel },
+                learning,
+                dailyLimit,
+              )
+            : undefined;
+        const decided = round?.result && {
+          directive: round.result.directive,
+          model: round.result.directive.model ?? CLEF_MODEL,
+          cost: round.cost,
+        };
         try {
           return {
             agentId: agent.id,
-            result: await this.requestDirective(agent.id, serialized, policyLabel, world),
+            round,
+            result: await this.requestDirective(
+              agent.id,
+              serialized,
+              policyLabel,
+              world,
+              clefOptions,
+              decided,
+            ),
           };
         } catch (error) {
           const decisionError =
@@ -925,6 +1402,7 @@ export class WorldRoom extends DurableObject<Env> {
                 );
           return {
             agentId: agent.id,
+            round,
             error: decisionError.message,
             retryable: decisionError.retryable,
           };
@@ -935,6 +1413,8 @@ export class WorldRoom extends DurableObject<Env> {
     const errors: string[] = [];
     let retryableFailure = agents.length < dueAgents.length;
     for (const outcome of outcomes) {
+      if (outcome.round)
+        this.recordHarnessRound(world, outcome.agentId, candidateTick, outcome.round, learning);
       if (!outcome.result) {
         errors.push(`${outcome.agentId}: ${outcome.error}`);
         if (outcome.retryable) retryableFailure = true;
@@ -1191,6 +1671,8 @@ export class WorldRoom extends DurableObject<Env> {
     observation: string,
     policy: string,
     world: WorldState,
+    clefOptions?: ClefHarnessOptions,
+    decided?: Awaited<ReturnType<typeof requestClefDirective>>,
   ): Promise<ModelDirectiveResult> {
     const state = { ...JSON.parse(observation), nullclawPolicy: policy } as Record<string, unknown>;
     const countRequest = () => {
@@ -1199,19 +1681,25 @@ export class WorldRoom extends DurableObject<Env> {
       world.llm.callsToday += 1;
       world.llm.totalCalls += 1;
     };
-    countRequest();
     let decision: Awaited<ReturnType<typeof requestClefDirective>>;
-    try {
-      decision = await requestClefDirective(this.env.OPENROUTER_API_KEY!, state);
-    } catch (error) {
-      if (error instanceof ClefDecisionError) {
-        if (error.status === 402 || error.status === 429)
-          world.llm.decisionBlockedUntil = Date.now() + error.retryAfterMs;
-        throw new ModelDecisionError(error.message, error.retryable);
+    if (decided) {
+      // A Harness² round chose this directive and already counted and paid for its calls.
+      decision = decided;
+    } else {
+      // A harness can force every answer; then no request leaves the Worker and none counts.
+      if (Object.keys(prepareClefDecision(state, clefOptions).asked).length) countRequest();
+      try {
+        decision = await requestClefDirective(this.env.OPENROUTER_API_KEY!, state, clefOptions);
+      } catch (error) {
+        if (error instanceof ClefDecisionError) {
+          if (error.status === 402 || error.status === 429)
+            world.llm.decisionBlockedUntil = Date.now() + error.retryAfterMs;
+          throw new ModelDecisionError(error.message, error.retryable);
+        }
+        throw error;
       }
-      throw error;
+      world.llm.totalCost += decision.cost;
     }
-    world.llm.totalCost += decision.cost;
     world.llm.lastModel = decision.model;
     const needsGeneration =
       decision.directive.goal === "build" ||
@@ -1344,6 +1832,16 @@ export class WorldRoom extends DurableObject<Env> {
   }
 }
 
+function parseJsonRows<T>(rows: JsonRow[]): T[] {
+  return rows.flatMap((row) => {
+    try {
+      return [JSON.parse(row.json) as T];
+    } catch {
+      return [];
+    }
+  });
+}
+
 function providerCooldown(response: Response, message = ""): number {
   if (response.status === 402 || /per.day|daily/iu.test(message)) {
     const tomorrow = new Date();
@@ -1442,6 +1940,8 @@ export default {
       return json(await world.heldOutAssay());
     if (url.pathname === "/api/hierarchy" && request.method === "GET")
       return json(await world.hierarchy());
+    if (url.pathname === "/api/harness" && request.method === "GET")
+      return json(await world.harnessReport());
     if (url.pathname === "/api/ws") return world.fetch(request);
     if (url.pathname.startsWith("/api/") && request.method !== "GET")
       return json({ error: "Method not allowed" }, { status: 405, headers: { Allow: "GET" } });
